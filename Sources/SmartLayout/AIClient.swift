@@ -76,6 +76,46 @@ struct AIResult {
     let note: String?
     var alternative: String? = nil   // альтернативный вариант (review)
     var next: String? = nil          // что можно написать дальше (review)
+    /// Вариант формулировки нарушил правило «не похоже на нейросеть». Исправленный текст
+    /// показывается сразу, а переписанный вариант догружается в фоне (`rewriteAlternative`).
+    var rewrite: Rewrite? = nil
+
+    struct Rewrite {
+        let messages: [[String: String]]   // разговор с моделью, включая просьбу переписать
+        let original: String
+        let slang: Set<String>
+    }
+}
+
+/// Последние ответы модели: если текст тот же (стёрли и набрали заново), ответ мгновенный и бесплатный.
+struct AIResultCache {
+    let capacity: Int
+    let ttl: TimeInterval
+    private var items: [String: (date: Date, result: AIResult)] = [:]
+    private var order: [String] = []
+
+    init(capacity: Int = 64, ttl: TimeInterval = 600) {
+        self.capacity = capacity
+        self.ttl = ttl
+    }
+
+    static func key(_ mode: AIClient.Mode, _ text: String, suggestNext: Bool) -> String {
+        "\(mode)|\(suggestNext)|\(text)"
+    }
+
+    mutating func get(_ key: String, now: Date = Date()) -> AIResult? {
+        guard let item = items[key] else { return nil }
+        guard now.timeIntervalSince(item.date) < ttl else { items[key] = nil; return nil }
+        return item.result
+    }
+
+    mutating func put(_ key: String, _ result: AIResult, now: Date = Date()) {
+        if items[key] == nil { order.append(key) }
+        items[key] = (now, result)
+        while order.count > capacity { items[order.removeFirst()] = nil }
+    }
+
+    var count: Int { items.count }
 }
 
 final class AIClient {
@@ -135,19 +175,33 @@ final class AIClient {
         var appName: String = ""          // в каком приложении печатают
         var glossary: [String] = []       // словарь и сленг пользователя
         var slang: Set<String> = []        // все известные сленговые слова (для проверки варианта)
-        var style: String = ""             // профиль стиля автора и примеры его текстов
+        var styleProfile: String = ""      // описание стиля и примеры из анкеты: не меняется
+        var styleRecent: String = ""       // свежие тексты автора: меняются
         var conversation: String = ""      // память разговора в этом окне
         var suggestNext: Bool = false      // нужно ли предлагать продолжение
     }
 
-    private static func userMessage(_ text: String, _ ctx: Context) -> String {
+    /// Системное сообщение: инструкция и постоянный профиль стиля. Оно одинаковое от запроса
+    /// к запросу, поэтому провайдер (OpenAI и др.) кэширует его — запрос быстрее и дешевле.
+    static func systemMessage(_ mode: Mode, _ ctx: Context) -> String {
+        let prompt: String
+        switch mode {
+        case .fix: prompt = fixPrompt
+        case .review: prompt = reviewPrompt
+        case .improve: prompt = improvePrompt
+        }
+        return ctx.styleProfile.isEmpty ? prompt : prompt + "\n\n" + ctx.styleProfile
+    }
+
+    /// Сообщение пользователя: от более постоянного к меняющемуся, текст для правки — в конце.
+    static func userMessage(_ text: String, _ ctx: Context) -> String {
         var parts: [String] = []
-        if !ctx.appName.isEmpty { parts.append("Приложение: \(ctx.appName)") }
         if !ctx.glossary.isEmpty {
             parts.append("Слова пользователя (его сленг и термины, считать правильными и не менять): " +
                          ctx.glossary.joined(separator: ", "))
         }
-        if !ctx.style.isEmpty { parts.append(ctx.style) }
+        if !ctx.appName.isEmpty { parts.append("Приложение: \(ctx.appName)") }
+        if !ctx.styleRecent.isEmpty { parts.append(ctx.styleRecent) }
         if !ctx.conversation.isEmpty {
             parts.append("Память разговора (последние минуты), только для понимания (НЕ исправлять и НЕ выводить):\n<<<\n\(ctx.conversation)\n>>>")
         }
@@ -163,14 +217,8 @@ final class AIClient {
     func run(_ mode: Mode, text: String, context: Context = Context(),
              config: AIConfig = .current) async throws -> AIResult {
         guard config.isConfigured else { throw AIError.notConfigured }
-        let system: String
-        switch mode {
-        case .fix: system = Self.fixPrompt
-        case .review: system = Self.reviewPrompt
-        case .improve: system = Self.improvePrompt
-        }
         var messages: [[String: String]] = [
-            ["role": "system", "content": system],
+            ["role": "system", "content": Self.systemMessage(mode, context)],
             ["role": "user", "content": Self.userMessage(text, context)]
         ]
 
@@ -207,11 +255,21 @@ final class AIClient {
             }
             if problems.isEmpty { return result }
             problems = Array(problems.prefix(6))
-            if attempt == 0 {
-                messages.append(["role": "assistant", "content": content])
-                messages.append(["role": "user", "content":
+            let retry = messages + [
+                ["role": "assistant", "content": content],
+                ["role": "user", "content":
                     "В варианте нарушены правила естественного текста: \(problems.joined(separator: "; ")). " +
-                    "Перепиши, строго соблюдая все правила. Формат ответа тот же."])
+                    "Перепиши, строго соблюдая все правила. Формат ответа тот же."]
+            ]
+            // Подсказка при паузе: исправленный текст не ждёт второго запроса,
+            // вариант формулировки догрузится в фоне.
+            if mode == .review {
+                result.alternative = nil
+                result.rewrite = AIResult.Rewrite(messages: retry, original: text, slang: context.slang)
+                return result
+            }
+            if attempt == 0 {
+                messages = retry
                 continue
             }
             // Вторая попытка тоже не прошла: такой вариант не показываем.
@@ -219,6 +277,25 @@ final class AIClient {
             throw AIError.badResponse("вариант похож на сгенерированный, попробуйте ещё раз")
         }
         throw AIError.badResponse("нет ответа")
+    }
+
+    /// Второй запрос для варианта формулировки: nil, если и он нарушает правила.
+    func rewriteAlternative(_ rewrite: AIResult.Rewrite, config: AIConfig = .current) async throws -> String? {
+        let content = try await complete(messages: rewrite.messages, config: config)
+        guard let parsed = Self.parseReview(content), let alt = parsed.alternative,
+              HumanStyle.violations(in: alt, original: rewrite.original, slang: rewrite.slang).isEmpty else { return nil }
+        return alt
+    }
+
+    /// Открыть соединение с сервисом заранее (без ключа и без текста): первая подсказка
+    /// не тратит время на установку защищённого соединения.
+    static func warmUp(_ config: AIConfig) {
+        guard config.isConfigured, !config.isLocal, let url = URL(string: config.baseURL),
+              let scheme = url.scheme, let host = url.host,
+              let root = URL(string: "\(scheme)://\(host)\(url.port.map { ":\($0)" } ?? "")/") else { return }
+        var req = URLRequest(url: root, timeoutInterval: 10)
+        req.httpMethod = "HEAD"
+        URLSession.shared.dataTask(with: req) { _, _, _ in }.resume()
     }
 
     private func complete(messages: [[String: String]], config: AIConfig) async throws -> String {

@@ -28,6 +28,12 @@ final class KeyboardMonitor {
     private var earlyDone = false          // раннее определение уже сработало для этого слова
     /// Текущее слово набирается в поле пароля: не исправляем, не учимся, не запоминаем.
     private var wordIsSecret = false
+    /// Поле в фокусе — поле пароля? Спрашиваем Accessibility один раз, пока фокус не сменился
+    /// (клик, Tab, Enter, сочетания с ⌘/⌃/⌥, переход в другое приложение сбрасывают ответ).
+    private var focusIsSecret: Bool?
+    /// Счётчик нажатий: позднее исправление применяется, только если после разделителя
+    /// вы больше ничего не нажали.
+    private(set) var keySeq = 0
     /// Текущая раскладка (кэш, обновляется при переключении).
     private(set) var layout = InputSource.currentLanguage() ?? "en"
     private var lastAction: LastAction?
@@ -80,6 +86,7 @@ final class KeyboardMonitor {
         typedText = ""
         earlyDone = false
         wordIsSecret = false
+        focusIsSecret = nil
         lastAction = nil
     }
 
@@ -139,6 +146,7 @@ final class KeyboardMonitor {
             return pass
         }
 
+        keySeq &+= 1
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
 
@@ -173,6 +181,7 @@ final class KeyboardMonitor {
 
         if keyCode == kReturn || keyCode == kEnter || keyCode == kTab {
             let fixed = boundary(delimiter: .key(CGKeyCode(keyCode)), layout: layout)
+            focusIsSecret = nil     // Enter/Tab могут перевести фокус
             if keyCode != kTab, !typedText.isEmpty { onParagraph?(typedText) }
             typedText = ""          // новый абзац или переход в другое поле
             onTyped?("\n")
@@ -197,7 +206,10 @@ final class KeyboardMonitor {
         if isWordChar(ch, layout: layout) {
             // Один запрос к Accessibility на слово: не поле ли это пароля
             // (браузеры и Electron не всегда включают защищённый ввод).
-            if buffer.isEmpty { wordIsSecret = TextAccess.focusedIsSecure(timeout: 0.1) }
+            if buffer.isEmpty {
+                if focusIsSecret == nil { focusIsSecret = TextAccess.focusedIsSecure(timeout: 0.1) }
+                wordIsSecret = focusIsSecret ?? false
+            }
             buffer.append(ch)
             if wordIsSecret { return pass }
             typedReplaceTail(0, with: String(ch))
@@ -223,12 +235,56 @@ final class KeyboardMonitor {
     }
 
     /// Возвращает true, если исправление выполнено и исходное нажатие нужно поглотить.
+    ///
+    /// Проверщик macOS здесь не вызывается: ответ берётся из частотного словаря и кэша.
+    /// Если его нет, разделитель проходит сразу, слово проверяется в фоне и исправляется
+    /// следом (`lateFix`). Enter и Tab так нельзя: после них текст мог уйти или фокус смениться,
+    /// поэтому для них проверщик спрашивается синхронно (если он не тормозит).
     private func boundary(delimiter: Delimiter, layout: String) -> Bool {
         let token = buffer
         buffer = ""
         earlyDone = false
-        guard !token.isEmpty, !wordIsSecret, let fix = engine.evaluate(token: token, layout: layout) else { return false }
+        guard !token.isEmpty, !wordIsSecret else { return false }
+        let decision: Decision
+        if case .key = delimiter, !engine.isSlow {
+            if let fix = engine.evaluate(token: token, layout: layout) { decision = .fix(fix) } else { decision = .keep }
+        } else {
+            decision = engine.evaluateCached(token: token, layout: layout)
+        }
+        switch decision {
+        case .keep: return false
+        case .pending(let keys):
+            if case .char(let c) = delimiter {
+                let seq = keySeq
+                engine.prefetch(keys) { [weak self] in self?.lateFix(token: token, delimiter: c, layout: layout, seq: seq) }
+            } else {
+                engine.prefetch(keys) {}   // в следующий раз ответ уже будет в кэше
+            }
+            return false
+        case .fix(let fix):
+            apply(fix, token: token, delimiter: delimiter, layout: layout)
+            return true
+        }
+    }
 
+    /// Исправить слово, уже напечатанное вместе с разделителем, когда фоновая проверка ответила.
+    private func lateFix(token: String, delimiter: Character, layout: String, seq: Int) {
+        let typed = token + String(delimiter)
+        guard seq == keySeq, layout == self.layout, buffer.isEmpty, !AppExclusions.frontmostExcluded,
+              typedText.hasSuffix(typed), let fix = engine.evaluate(token: token, layout: layout) else { return }
+        KeySender.backspace(times: typed.count)
+        var text = fix.replacement
+        text.append(fix.switchTo == "ru" ? LayoutMap.delimiterEnToRu(delimiter) : delimiter)
+        KeySender.type(text)
+        if let lang = fix.switchTo { switchLayout(to: lang) }
+        typedReplaceTail(typed.count, with: text)
+        lastAction = LastAction(fix: fix, insertedCount: fix.replacement.count + 1,
+                                originalDelimiter: .char(delimiter), previousLayout: layout)
+        onFix?(fix)
+    }
+
+    /// Заменить слово на границе: нажатие-разделитель ещё не напечатано.
+    private func apply(_ fix: Fix, token: String, delimiter: Delimiter, layout: String) {
         KeySender.backspace(times: token.count)
         var text = fix.replacement
         if case .char(let c) = delimiter {
@@ -246,7 +302,6 @@ final class KeyboardMonitor {
             lastAction = LastAction(fix: fix, insertedCount: inserted, originalDelimiter: delimiter, previousLayout: layout)
         }
         onFix?(fix)
-        return true
     }
 
     /// Исправление посреди слова: последний символ ещё не напечатан,

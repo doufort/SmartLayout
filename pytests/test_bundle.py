@@ -113,8 +113,8 @@ def test_repo_style_profile_matches_build(contents, resources):
 
 
 def test_no_stray_files_in_resources(contents):
-    allowed = {"AppIcon.icns", "style_profile.json"} | {
-        f"{k}_{l}.txt" for k in ("slang", "typos") for l in ("ru", "en")
+    allowed = {"AppIcon.icns", "style_profile.json", "WORDLISTS_LICENSE.txt"} | {
+        f"{k}_{l}.txt" for k in ("slang", "typos", "words") for l in ("ru", "en")
     }
     assert {p.name for p in (contents / "Resources").iterdir()} <= allowed
 

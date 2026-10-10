@@ -56,24 +56,34 @@ final class StyleProfile {
 
     var recentCount: Int { recent.count }
 
-    /// Блок для инструкции модели (до ~2500 символов).
-    func promptBlock() -> String {
+    /// Постоянная часть профиля для системного сообщения: описание и примеры из анкеты.
+    /// Не меняется от запроса к запросу, поэтому провайдер может её кэшировать.
+    func stableBlock() -> String {
         var parts: [String] = []
         if !base.description.isEmpty { parts.append("Стиль автора: \(base.description)") }
-        var examples: [String] = []
-        var budget = 2200
-        // Сначала свежие тексты, потом примеры из анкеты.
-        for s in recent.reversed() + base.samples {
-            guard budget > 0 else { break }
-            let cut = String(s.prefix(min(s.count, budget)))
-            examples.append("- " + cut)
-            budget -= cut.count
-        }
+        let examples = Self.examples(base.samples, budget: 1500)
         if !examples.isEmpty {
-            parts.append("Примеры того, как автор пишет на самом деле (его слова, длина фраз, тон):\n" +
-                         examples.joined(separator: "\n"))
+            parts.append("Примеры того, как автор пишет на самом деле (его слова, длина фраз, тон):\n" + examples)
         }
         return parts.joined(separator: "\n")
+    }
+
+    /// Свежие тексты автора (меняются): идут в сообщение пользователя, после постоянной части.
+    func recentBlock() -> String {
+        let examples = Self.examples(recent.reversed(), budget: 1200)
+        return examples.isEmpty ? "" : "Свежие тексты автора (самые новые сверху):\n" + examples
+    }
+
+    private static func examples<S: Sequence>(_ texts: S, budget: Int) -> String where S.Element == String {
+        var out: [String] = []
+        var left = budget
+        for s in texts {
+            guard left > 0 else { break }
+            let cut = String(s.prefix(left))
+            out.append("- " + cut)
+            left -= cut.count
+        }
+        return out.joined(separator: "\n")
     }
 
     private func scheduleSave() {

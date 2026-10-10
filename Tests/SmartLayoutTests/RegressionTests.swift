@@ -157,7 +157,7 @@ final class CorrectionEngineTests: XCTestCase {
         let langs = NSSpellChecker.shared.availableLanguages
         try XCTSkipUnless(langs.contains { $0.hasPrefix("ru") } && langs.contains { $0.hasPrefix("en") },
                           "нужны русский и английский словари проверки орфографии macOS")
-        engine = CorrectionEngine(store: TestFiles.wordStore())
+        engine = TestFiles.engine()
     }
 
     func testWrongLayoutIsConverted() {

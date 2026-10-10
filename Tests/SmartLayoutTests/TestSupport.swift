@@ -30,4 +30,9 @@ enum TestFiles {
     static func wordStore() -> WordStore {
         WordStore(directory: tempDir(), defaults: defaults(), resources: resources)
     }
+
+    /// Частотный словарь из Resources (грузится один раз на все тесты).
+    static let lexicon = Lexicon(resources: resources)
+
+    static func engine() -> CorrectionEngine { CorrectionEngine(store: wordStore(), lexicon: lexicon) }
 }

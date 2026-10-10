@@ -21,6 +21,8 @@ final class SuggestionPanel: NSObject {
     private var hideWork: DispatchWorkItem?
 
     var isVisible: Bool { panel.isVisible }
+    /// Номер показа: позволяет понять, та же ли подсказка ещё на экране.
+    private(set) var session = 0
 
     override init() {
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 180),
@@ -84,6 +86,7 @@ final class SuggestionPanel: NSObject {
               primaryTitle: String = "Исправить  ⌥↩",
               onAccept: @escaping () -> Void) {
         if isVisible { hide() }
+        session += 1
         self.onAccept = onAccept
         self.onAcceptAlternative = onAcceptAlternative
         self.onAcceptNext = onAcceptNext

@@ -60,7 +60,9 @@ def test_build_script_copies_every_resource_the_code_loads():
         names |= set(re.findall(r'forResource: "([^"]+)", withExtension: "(\w+)"', f.read_text(encoding="utf-8")))
     names |= {(n, "txt") for n in ("slang_ru", "slang_en", "typos_ru", "typos_en")}  # грузятся в цикле
     for name, ext in names:
-        assert (ROOT / "Resources" / f"{name}.{ext}").exists(), f"{name}.{ext}"
+        for lang in ("ru", "en"):   # "words_\(lang)" — по файлу на язык
+            file = name.replace("\\(lang)", lang)
+            assert (ROOT / "Resources" / f"{file}.{ext}").exists(), f"{file}.{ext}"
     script = (ROOT / "build_app.sh").read_text(encoding="utf-8")
     assert "cp Resources/*.txt Resources/*.json Resources/AppIcon.icns" in script
 
@@ -159,3 +161,37 @@ def test_privacy_defaults_for_new_installs():
     for key in ("aiAutoCheck", "aiReadWindow"):
         assert f'd.object(forKey: "{key}") as? Bool ?? false' in src, key
         assert f'"{key}": true' not in src, key
+
+
+def test_key_tap_does_not_wait_for_spell_checker():
+    """На пробеле и знаках препинания проверщик macOS не вызывается синхронно."""
+    src = read("KeyboardMonitor.swift")
+    boundary = src[src.index("private func boundary"):src.index("private func lateFix")]
+    assert "engine.evaluateCached(" in boundary and "engine.prefetch(" in boundary
+    early = read("CorrectionEngine.swift")
+    has = early[early.index("func hasCompletions"):early.index("func noteDuration")]
+    assert "if !ok && lexicon.isEmpty" in has, "completions() — только запасной путь без частотного словаря"
+    assert "requestChecking(" in early
+
+
+def test_word_lists_are_attributed():
+    lic = (ROOT / "Resources" / "WORDLISTS_LICENSE.txt").read_text(encoding="utf-8")
+    assert "CC BY-SA 4.0" in lic and "FrequencyWords" in lic
+    for lang in ("ru", "en"):
+        head = (ROOT / "Resources" / f"words_{lang}.txt").read_text(encoding="utf-8").splitlines()[0]
+        assert head.startswith("#") and "CC BY-SA 4.0" in head
+
+
+def test_ai_requests_are_cancellable_and_cached():
+    src = read("AIController.swift")
+    typed = src[src.index("func userTyped"):src.index("func cancel()")]
+    assert "autoTask?.cancel()" in typed, "печать отменяет запрос автопроверки"
+    assert "AIClient.warmUp(" in typed
+    req = src[src.index("private func request("):src.index("static func isCancellation")]
+    assert "cache.get(" in req and "cache.put(" in req
+
+
+def test_humanstyle_regex_compiled_once():
+    src = read("HumanStyle.swift")
+    assert "static let fromTo = try! NSRegularExpression" in src
+    assert "options: .regularExpression" not in src

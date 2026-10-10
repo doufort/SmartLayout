@@ -38,8 +38,23 @@ enum HumanStyle {
         "here is the", "here's the"
     ]
 
+    /// «от … до …»: компилируется один раз, а не при каждой проверке.
+    private static let fromTo = try! NSRegularExpression(pattern: #"\bот\s+\S+\s+до\s+\S+"#)
+
+    private static func hasFromTo(_ s: String) -> Bool {
+        fromTo.firstMatch(in: s, range: NSRange(location: 0, length: (s as NSString).length)) != nil
+    }
+
+    /// Поиск подстроки без юникодной нормализации Swift String: для коротких фраз
+    /// в тексте до нескольких тысяч символов это в разы быстрее.
+    private static func has(_ s: NSString, _ phrase: String) -> Bool {
+        s.range(of: phrase, options: .literal).location != NSNotFound
+    }
+
     static func violations(in text: String, original: String, slang: Set<String> = []) -> [String] {
         let t = text.lowercased(), o = original.lowercased()
+        let tn = t as NSString, on = o as NSString
+        let textCount = text.count, originalCount = original.count
         var v = [String]()
 
         // Сленг автора должен остаться: вариант не должен звучать «литературнее» автора.
@@ -50,13 +65,10 @@ enum HumanStyle {
         let lost = Set(words(original)).filter { slang.contains($0) && !textWords.contains($0) }
         if !lost.isEmpty { v.append("заменены слова автора: \(lost.sorted().joined(separator: ", ")) (их нужно оставить как есть)") }
 
-        for p in bannedPhrases where t.contains(p) && !o.contains(p) { v.append("оборот «\(p)»") }
+        for p in bannedPhrases where has(tn, p) && !has(on, p) { v.append("оборот «\(p)»") }
 
         // «от … до …»
-        if t.range(of: #"\bот\s+\S+\s+до\s+\S+"#, options: .regularExpression) != nil,
-           o.range(of: #"\bот\s+\S+\s+до\s+\S+"#, options: .regularExpression) == nil {
-            v.append("пара крайностей «от … до …»")
-        }
+        if hasFromTo(t), !hasFromTo(o) { v.append("пара крайностей «от … до …»") }
 
         // Длинные тире
         let dashes = text.filter { $0 == "—" }.count - original.filter { $0 == "—" }.count
@@ -77,7 +89,7 @@ enum HumanStyle {
         if emoji(text) > emoji(original) { v.append("эмодзи") }
 
         // Сильно длиннее исходника — значит, что-то додумано
-        if text.count > Int(Double(original.count) * 1.6) + 30 { v.append("текст стал заметно длиннее исходного") }
+        if textCount > Int(Double(originalCount) * 1.6) + 30 { v.append("текст стал заметно длиннее исходного") }
 
         // Слова С Заглавной Буквы подряд (как в заголовках)
         let tokens = text.split(whereSeparator: \.isWhitespace)

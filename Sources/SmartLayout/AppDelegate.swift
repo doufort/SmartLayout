@@ -26,9 +26,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Не даём macOS «усыплять» приложение (App Nap), чтобы реакция была мгновенной.
+        // Не даём macOS «усыплять» приложение (App Nap): иначе таймер паузы перед проверкой ИИ
+        // может срабатывать с опозданием. `.latencyCritical` не нужен: перехват клавиш работает
+        // и без него, а этот режим не даёт системе экономить энергию.
         activity = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+            options: [.userInitiatedAllowingIdleSystemSleep],
             reason: "Отслеживание набора текста")
 
         // Автозапуск включаем один раз, при первом запуске; дальше — как выберете в меню.
@@ -73,7 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.rebuildMenu()
         }
         LayoutMap.reload()   // таблица клавиш по включённым раскладкам
-        AppExclusions.startTracking { [weak self] in self?.updateTitle(); self?.rebuildMenu() }
+        // Другое приложение — другое поле: сбрасываем набранное и ответ «поле пароля?».
+        AppExclusions.startTracking { [weak self] in self?.monitor.reset(); self?.updateTitle(); self?.rebuildMenu() }
         installEditMenu()
         startWhenTrusted()
         if !AIConfig.current.isConfigured { settingsWindow.show() }

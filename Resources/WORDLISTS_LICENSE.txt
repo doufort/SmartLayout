@@ -1,0 +1,12 @@
+Resources/words_ru.txt и Resources/words_en.txt построены из FrequencyWords
+(Hermit Dave, https://github.com/hermitdave/FrequencyWords), собранного по
+корпусу OpenSubtitles 2018 (http://opus.nlpl.eu/OpenSubtitles2018.php).
+
+Лицензия списков слов: Creative Commons Attribution-ShareAlike 4.0
+International (CC BY-SA 4.0), https://creativecommons.org/licenses/by-sa/4.0/
+
+Изменения: оставлены слова только из букв (от 2 букв) в нижнем регистре,
+50 000 самых частых русских и 30 000 английских, частоты убраны.
+Сборка: tools/build_wordlists.py.
+
+Лицензия относится только к этим спискам слов, а не к коду SmartLayout.

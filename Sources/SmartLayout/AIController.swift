@@ -23,6 +23,11 @@ final class AIController {
     }
     private let panel = SuggestionPanel()
     private var pending: DispatchWorkItem?
+    /// Последние ответы модели: тот же текст — мгновенный ответ без запроса.
+    private var cache = AIResultCache()
+    /// Запрос автопроверки в полёте: отменяется, как только вы продолжаете печатать.
+    private var autoTask: Task<Void, Never>?
+    private var lastWarmUp = Date.distantPast
     private var typedSinceCheck = 0
     private var lastChecked = ""
     private var requestID = 0
@@ -39,10 +44,19 @@ final class AIController {
     /// Вызывается на каждый напечатанный символ.
     func userTyped(_ ch: Character) {
         pending?.cancel()
+        // Ответ на старый текст уже не нужен: не ждём его и не платим за него.
+        autoTask?.cancel()
+        autoTask = nil
         if panel.isVisible { panel.hide() }
-        guard Settings.shared.aiAutoCheck, AIConfig.current.isConfigured else { return }
+        let config = AIConfig.current
+        guard Settings.shared.aiAutoCheck, config.isConfigured else { return }
         // Терминалы, редакторы кода и менеджеры паролей — набранное там ИИ не отправляется.
         guard !AppExclusions.frontmostExcluded, !TextAccess.secureInputActive() else { return }
+        // Пока вы печатаете, заранее открываем соединение с сервисом — к паузе оно уже готово.
+        if Date().timeIntervalSince(lastWarmUp) > 60 {
+            lastWarmUp = Date()
+            AIClient.warmUp(config)
+        }
         typedSinceCheck += 1
         guard typedSinceCheck >= 10 else { return }
         let sentenceEnd = ".!?…\n".contains(ch)
@@ -55,6 +69,8 @@ final class AIController {
     /// Esc: отменить запрос и отклонить показанную подсказку.
     func cancel() {
         pending?.cancel()
+        autoTask?.cancel()
+        autoTask = nil
         requestID += 1
         panel.hide(rejected: true)
     }
@@ -96,7 +112,7 @@ final class AIController {
         var ctx = context(before: start, in: ns)
         ctx.suggestNext = Settings.shared.aiSuggestNext
 
-        request(.review, text: text, context: ctx) { [weak self] result in
+        request(.review, text: text, context: ctx, auto: true) { [weak self] result in
             guard let self else { return }
             // Пока ждали ответ, текст могли изменить — тогда подсказка уже неактуальна.
             let stillSame: () -> Bool = {
@@ -126,7 +142,7 @@ final class AIController {
         ctx.previousText = String(typed.dropLast(text.count).suffix(1500))
         ctx.suggestNext = Settings.shared.aiSuggestNext
 
-        request(.review, text: text, context: ctx) { [weak self] result in
+        request(.review, text: text, context: ctx, auto: true) { [weak self] result in
             guard let self else { return }
             let stillSame: () -> Bool = { self.typedText?().hasSuffix(text) == true }
             guard stillSame() else { return }
@@ -140,9 +156,37 @@ final class AIController {
     }
 
     /// Подсказка с двумя вариантами: исправленный (⌥↩) и альтернативный (⌥⇧↩).
+    /// Если вариант формулировки пришлось переписывать, исправленный текст показывается сразу,
+    /// а вариант добавляется, когда придёт второй ответ.
     private func showReview(_ result: AIResult, for text: String, near rect: NSRect?,
                             stillSame: @escaping () -> Bool, insertNext: @escaping (String) -> Void,
                             replace: @escaping (String) -> Void) {
+        var withoutRewrite = result
+        withoutRewrite.rewrite = nil
+        let now = withoutRewrite
+        let sessionBefore = panel.session
+        presentReview(now, for: text, near: rect, stillSame: stillSame, insertNext: insertNext, replace: replace)
+        guard let rewrite = result.rewrite else { return }
+        let shownSession = panel.session != sessionBefore ? panel.session : nil
+        let id = requestID
+        autoTask = Task { [weak self] in
+            let alternative = try? await self?.client.rewriteAlternative(rewrite)
+            await MainActor.run {
+                guard let self, id == self.requestID, let alternative, stillSame() else { return }
+                // Подсказку за это время закрыли — не показываем её снова.
+                if let s = shownSession, !(self.panel.isVisible && self.panel.session == s) { return }
+                var updated = now
+                updated.alternative = alternative
+                self.cache.put(AIResultCache.key(.review, text, suggestNext: Settings.shared.aiSuggestNext), updated)
+                self.presentReview(updated, for: text, near: rect, stillSame: stillSame,
+                                   insertNext: insertNext, replace: replace)
+            }
+        }
+    }
+
+    private func presentReview(_ result: AIResult, for text: String, near rect: NSRect?,
+                               stillSame: @escaping () -> Bool, insertNext: @escaping (String) -> Void,
+                               replace: @escaping (String) -> Void) {
         let fixed = Self.keepEdgeWhitespace(result.text, like: text)
         let alternative = result.alternative.map { Self.keepEdgeWhitespace($0, like: text) }
         let fixedChanged = Self.normalized(fixed) != Self.normalized(text)
@@ -272,30 +316,44 @@ final class AIController {
         let readWindow = Settings.shared.aiReadWindow
         if readWindow { memory.captureScreen(key: key) }   // обновится к следующей проверке
         ctx.conversation = memory.contextText(key: key, includeScreen: readWindow)
-        ctx.style = style.promptBlock()
+        ctx.styleProfile = style.stableBlock()
+        ctx.styleRecent = style.recentBlock()
         ctx.slang = store.words.union(store.learning.learnedWords)
         return ctx
     }
 
-    private func request(_ mode: AIClient.Mode, text: String, context: AIClient.Context,
+    /// `auto`: запрос автопроверки, его отменяет следующее нажатие клавиши.
+    private func request(_ mode: AIClient.Mode, text: String, context: AIClient.Context, auto: Bool = false,
                          completion: @escaping (AIResult) -> Void) {
         requestID += 1
         let id = requestID
+        // «Улучшить» не кэшируем: повторное нажатие — просьба о новом варианте.
+        let key = mode == .improve ? nil : AIResultCache.key(mode, text, suggestNext: context.suggestNext)
+        if let key, let hit = cache.get(key) {
+            completion(hit)
+            return
+        }
         onBusy?(true)
-        Task {
+        let task = Task {
             do {
                 let result = try await client.run(mode, text: text, context: context)
                 await MainActor.run {
                     self.onBusy?(false)
+                    if let key { self.cache.put(key, result) }
                     if id == self.requestID { completion(result) }
                 }
             } catch {
                 await MainActor.run {
                     self.onBusy?(false)
-                    if id == self.requestID { self.onError?(error.localizedDescription) }
+                    if id == self.requestID && !Self.isCancellation(error) { self.onError?(error.localizedDescription) }
                 }
             }
         }
+        if auto { autoTask = task }
+    }
+
+    static func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError || (error as? URLError)?.code == .cancelled
     }
 
     private func apply(_ newText: String, replacing old: String, range: NSRange, element: AXUIElement) {

@@ -132,6 +132,26 @@ def check_typos(path: Path, slang: set[str] | None = None) -> list[str]:
     return errs
 
 
+def check_wordlist(path: Path) -> list[str]:
+    """words_ru.txt / words_en.txt: lowercase letters only, 2+ letters, no duplicates."""
+    errs = check_encoding(path)
+    lang = lang_of(path)
+    rx = re.compile(r"^[а-яё]{2,}$") if lang == "ru" else re.compile(r"^[a-z]{2,}$")
+    seen: set[str] = set()
+    bad = 0
+    for n, w in entries(path):
+        if not rx.match(w):
+            bad += 1
+            if bad <= 5:
+                errs.append(f"{path.name}:{n}: {w!r} — нужны только строчные буквы своего языка, от 2 букв")
+        if w in seen:
+            errs.append(f"{path.name}:{n}: дубликат {w!r}")
+        seen.add(w)
+    if len(seen) < 1000:
+        errs.append(f"{path.name}: подозрительно мало слов ({len(seen)})")
+    return errs
+
+
 def check_style_profile(path: Path) -> list[str]:
     errs = check_encoding(path)
     try:
@@ -171,6 +191,10 @@ def check_dir(d: Path) -> list[str]:
             errs += check_typos(typos_path, slang)
         else:
             errs.append(f"нет файла {typos_path.name}")
+    for lang in ("ru", "en"):
+        wl = d / f"words_{lang}.txt"
+        if wl.exists():
+            errs += check_wordlist(wl)
     sp = d / "style_profile.json"
     if sp.exists():
         errs += check_style_profile(sp)
@@ -180,6 +204,8 @@ def check_dir(d: Path) -> list[str]:
 def check_path(p: Path) -> list[str]:
     if p.is_dir():
         return check_dir(p)
+    if p.name.startswith("words_"):
+        return check_wordlist(p)
     if p.name.startswith("slang_") or p.name.startswith("typos_"):
         # Cross-file checks need the sibling files, so validate the whole dir.
         return check_dir(p.parent)
