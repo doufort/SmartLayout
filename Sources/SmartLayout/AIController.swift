@@ -169,10 +169,11 @@ final class AIController {
         guard let rewrite = result.rewrite else { return }
         let shownSession = panel.session != sessionBefore ? panel.session : nil
         let id = requestID
-        autoTask = Task { [weak self] in
-            let alternative = try? await self?.client.rewriteAlternative(rewrite)
+        // AIController живёт всё время работы приложения, поэтому self захватывается напрямую.
+        autoTask = Task {
+            let alternative = try? await self.client.rewriteAlternative(rewrite)
             await MainActor.run {
-                guard let self, id == self.requestID, let alternative, stillSame() else { return }
+                guard id == self.requestID, let alternative, stillSame() else { return }
                 // Подсказку за это время закрыли — не показываем её снова.
                 if let s = shownSession, !(self.panel.isVisible && self.panel.session == s) { return }
                 var updated = now

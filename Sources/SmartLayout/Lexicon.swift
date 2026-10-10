@@ -16,8 +16,16 @@ final class Lexicon {
         for lang in ["ru", "en"] {
             guard let url = resources.url(forResource: "words_\(lang)", withExtension: "txt"),
                   let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-            load(lang, text.split(whereSeparator: \.isNewline).lazy
-                .filter { !$0.hasPrefix("#") }.map { String($0) })
+            load(lang, text.split(separator: "\n").lazy.filter { !$0.hasPrefix("#") }.map { String($0) })
+        }
+    }
+
+    /// Загрузка занимает около полусекунды, поэтому при запуске она идёт в фоне;
+    /// пока словарь не готов, движок работает по-старому, через проверщик.
+    static func loadInBackground(resources: Bundle = .main, completion: @escaping (Lexicon) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let lexicon = Lexicon(resources: resources)
+            DispatchQueue.main.async { completion(lexicon) }
         }
     }
 
@@ -32,7 +40,11 @@ final class Lexicon {
         p.reserveCapacity(120_000)
         for word in list {
             w.insert(word)
-            for n in Self.prefixLengths where word.count >= n { p.insert(String(word.prefix(n))) }
+            // Буквы — одиночные символы Unicode, поэтому режем по скалярам, без разбора графем.
+            let scalars = word.unicodeScalars
+            for n in Self.prefixLengths where scalars.count >= n {
+                p.insert(String(String.UnicodeScalarView(scalars.prefix(n))))
+            }
         }
         words[lang] = w
         prefixes[lang] = p

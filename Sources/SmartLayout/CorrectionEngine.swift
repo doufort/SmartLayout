@@ -40,7 +40,7 @@ final class CorrectionEngine {
     private let checker = NSSpellChecker.shared
     private let tag = NSSpellChecker.uniqueSpellDocumentTag()
     private let store: WordStore
-    let lexicon: Lexicon
+    private(set) var lexicon: Lexicon
     private var langCache = [String: String]()
 
     // Кэши, чтобы не спрашивать проверщик macOS повторно.
@@ -53,9 +53,17 @@ final class CorrectionEngine {
     static let slowCallLimit: TimeInterval = 0.3
     private(set) var slowUntil: Date?
 
-    init(store: WordStore, lexicon: Lexicon = Lexicon()) {
+    /// По умолчанию словарь пустой: приложение загружает его в фоне (`Lexicon.loadInBackground`)
+    /// и передаёт сюда через `use(_:)`.
+    init(store: WordStore, lexicon: Lexicon = Lexicon([:])) {
         self.store = store
         self.lexicon = lexicon
+    }
+
+    /// Подключить загруженный словарь (на главном потоке).
+    func use(_ lexicon: Lexicon) {
+        self.lexicon = lexicon
+        prefixCache.removeAll()   // ответы без словаря могли быть другими
     }
 
     func clearCaches() {

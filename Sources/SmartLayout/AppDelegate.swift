@@ -103,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startWhenTrusted() {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         DispatchQueue.main.async { [weak self] in self?.engine.warmUp() }
+        Lexicon.loadInBackground { [weak self] lexicon in self?.engine.use(lexicon) }
         if AXIsProcessTrustedWithOptions(opts) && monitor.start() {
             running = true
             updateTitle()

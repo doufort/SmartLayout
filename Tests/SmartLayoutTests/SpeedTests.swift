@@ -29,8 +29,27 @@ final class LexiconTests: XCTestCase {
         XCTAssertTrue(l.hasPrefix("прив", lang: "ru"))
     }
 
-    func testLoadingIsFast() {
+    /// Загрузка идёт в фоне, но время всё равно следим (около полусекунды на 80 тыс. слов).
+    func testLoadingTime() {
         measure { _ = Lexicon(resources: TestFiles.resources) }
+    }
+
+    func testBackgroundLoadingDeliversOnMain() {
+        let done = expectation(description: "lexicon")
+        Lexicon.loadInBackground(resources: TestFiles.resources) { lexicon in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertTrue(lexicon.contains("привет", lang: "ru"))
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 10)
+    }
+
+    /// Пока словарь грузится, движок работает через проверщик; после `use` — через словарь.
+    func testEngineStartsWithoutLexiconAndSwitches() {
+        let engine = CorrectionEngine(store: TestFiles.wordStore())
+        XCTAssertTrue(engine.lexicon.isEmpty)
+        engine.use(TestFiles.lexicon)
+        guard case .keep = engine.evaluateCached(token: "hello", layout: "en") else { return XCTFail("hello") }
     }
 }
 
