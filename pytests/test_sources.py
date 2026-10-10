@@ -156,4 +156,6 @@ def test_ai_never_reads_secure_fields():
 
 def test_privacy_defaults_for_new_installs():
     src = read("Settings.swift")
-    assert '"aiAutoCheck": false' in src and '"aiReadWindow": false' in src
+    for key in ("aiAutoCheck", "aiReadWindow"):
+        assert f'd.object(forKey: "{key}") as? Bool ?? false' in src, key
+        assert f'"{key}": true' not in src, key

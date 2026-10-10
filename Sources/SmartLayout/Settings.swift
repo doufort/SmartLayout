@@ -14,9 +14,6 @@ final class Settings {
             "autocorrect": true,
             "undoOnBackspace": true,
             "autocorrectGuess": false,
-            // Отправлять текст ИИ можно только с явного согласия: в новой установке выключено.
-            "aiAutoCheck": false,
-            "aiReadWindow": false,
             "aiSuggestNext": true,
             "memoryMinutes": 30.0,
             "aiPause": 1.5,
@@ -28,7 +25,7 @@ final class Settings {
     /// Версия 1.0 по умолчанию проверяла текст ИИ при паузе и читала текст окна.
     /// У тех, кто уже пользовался приложением, сохраняем это поведение явно,
     /// а в новой установке обе настройки выключены. Вызывается до `register(defaults:)`,
-    /// чтобы `object(forKey:)` видел только сохранённые значения.
+    /// чтобы `object(forKey:)` видел только сохранённые значения (оба ключа и так не регистрируются).
     private func migratePrivacyDefaults() {
         guard d.object(forKey: "privacyMigrated") == nil else { return }
         d.set(true, forKey: "privacyMigrated")
@@ -64,8 +61,11 @@ final class Settings {
     }
 
     /// Проверка ИИ (пунктуация, ошибки) при паузе в наборе.
+    /// Не регистрируется в `register(defaults:)`: значения по умолчанию оттуда видны всем
+    /// экземплярам UserDefaults в процессе и мешали бы миграции отличить «не задано» от «выключено».
+    /// Отправлять текст ИИ можно только с явного согласия: в новой установке выключено.
     var aiAutoCheck: Bool {
-        get { d.bool(forKey: "aiAutoCheck") }
+        get { d.object(forKey: "aiAutoCheck") as? Bool ?? false }
         set { d.set(newValue, forKey: "aiAutoCheck") }
     }
 
@@ -82,7 +82,7 @@ final class Settings {
 
     /// Передавать ИИ видимый текст окна (переписку, включая сообщения собеседника).
     var aiReadWindow: Bool {
-        get { d.bool(forKey: "aiReadWindow") }
+        get { d.object(forKey: "aiReadWindow") as? Bool ?? false }
         set { d.set(newValue, forKey: "aiReadWindow") }
     }
 

@@ -20,8 +20,8 @@ struct KeyTable {
         // (§ и `), основные клавиши идут в списке раньше.
         for (e, r) in letterKeys where e != r && enToRu[e] == nil {
             enToRu[e] = r
-            if r.isLetter && ruToEn[r] == nil { ruToEn[r] = e }
-            if r.isLetter && !e.isLetter { enKeys.insert(e) }
+            if Self.isCyrillic(r) && ruToEn[r] == nil { ruToEn[r] = e }
+            if Self.isCyrillic(r) && !e.isLetter { enKeys.insert(e) }
         }
         for (e, r) in letterKeys + otherKeys where e != r && !e.isLetter && !r.isLetter && delimiters[e] == nil {
             delimiters[e] = r
@@ -30,6 +30,11 @@ struct KeyTable {
         self.ruToEn = ruToEn
         self.enKeysThatAreRuLetters = enKeys
         self.delimiters = delimiters
+    }
+
+    /// Только русские буквы: в «Русская — ПК» на одной из клавиш есть латинская «Ë».
+    static func isCyrillic(_ c: Character) -> Bool {
+        ("а"..."я").contains(c) || ("А"..."Я").contains(c) || c == "ё" || c == "Ё"
     }
 
     /// Есть ли в таблице все 33 русские буквы в обоих регистрах.
@@ -87,10 +92,17 @@ enum LayoutMap {
 
 /// Чтение раскладок macOS через `UCKeyTranslate`.
 enum KeyboardLayouts {
-    /// Буквенные клавиши (ANSI/ISO): `, Q…P, [, ], A…L, ;, ', Z…M, ",", ".", "/", "\", "§".
-    static let letterKeyCodes: [UInt16] = [50, 12, 13, 14, 15, 17, 16, 32, 34, 31, 35, 33, 30,
-                                           0, 1, 2, 3, 5, 4, 38, 40, 37, 41, 39,
-                                           6, 7, 8, 9, 11, 45, 46, 43, 47, 44, 42, 10]
+    /// Буквенные клавиши: `, Q…P, [, ], A…L, ;, ', Z…M, ",", ".", "/", "\" и клавиша слева от Z на ISO.
+    /// Клавиша слева от «1» — код 50 на ANSI и код 10 на ISO (там коды 10 и 50 переставлены),
+    /// поэтому она идёт первой: при совпадении символов побеждает первая клавиша.
+    static func letterKeyCodes(iso: Bool) -> [UInt16] {
+        let leftOfOne: [UInt16] = iso ? [10, 50] : [50, 10]
+        return leftOfOne + [12, 13, 14, 15, 17, 16, 32, 34, 31, 35, 33, 30,
+                            0, 1, 2, 3, 5, 4, 38, 40, 37, 41, 39,
+                            6, 7, 8, 9, 11, 45, 46, 43, 47, 44, 42]
+    }
+
+    static var isISOKeyboard: Bool { Int(KBGetLayoutType(Int16(LMGetKbdType()))) == Int(kKeyboardISO) }
     /// Цифровой ряд: 1…0, "-", "=".
     static let otherKeyCodes: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28, 25, 29, 27, 24]
 
@@ -107,7 +119,7 @@ enum KeyboardLayouts {
             }
             return out
         }
-        let table = KeyTable(letterKeys: pairs(letterKeyCodes), otherKeys: pairs(otherKeyCodes))
+        let table = KeyTable(letterKeys: pairs(letterKeyCodes(iso: isISOKeyboard)), otherKeys: pairs(otherKeyCodes))
         return table.hasAllRussianLetters ? table : nil
     }
 

@@ -127,13 +127,30 @@ final class KeyTableTests: XCTestCase {
         return try XCTUnwrap(KeyboardLayouts.table(en: en, ru: ru))
     }
 
-    /// Таблица, построенная по «Русская — ПК», совпадает со встроенной.
+    /// Таблица, построенная по «Русская — ПК», совпадает со встроенной. Исключение — «ё»:
+    /// на ISO-клавиатуре клавиша слева от «1» в английской раскладке даёт «§», а не «`».
     func testRussianPCMatchesBuiltIn() throws {
         let t = try table("com.apple.keylayout.RussianWin")
-        XCTAssertEqual(t.ruToEn, LayoutMap.builtIn.ruToEn)
-        XCTAssertEqual(t.enKeysThatAreRuLetters, LayoutMap.builtIn.enKeysThatAreRuLetters)
-        for (en, ru) in LayoutMap.builtIn.enToRu { XCTAssertEqual(t.enToRu[en], ru, "\(en)") }
+        let leftOfOne: Set<Character> = ["`", "~", "§", "±"]
+        XCTAssertTrue(t.hasAllRussianLetters)
+        for (ru, en) in LayoutMap.builtIn.ruToEn where ru != "ё" && ru != "Ё" {
+            XCTAssertEqual(t.ruToEn[ru], en, "\(ru)")
+        }
+        XCTAssertTrue(["`", "§"].contains(t.ruToEn["ё"]), "\(String(describing: t.ruToEn["ё"]))")
+        XCTAssertTrue(["~", "±"].contains(t.ruToEn["Ё"]), "\(String(describing: t.ruToEn["Ё"]))")
+        XCTAssertEqual(t.ruToEn.keys.filter { !KeyTable.isCyrillic($0) }, [], "только русские буквы")
+        XCTAssertEqual(t.enKeysThatAreRuLetters.subtracting(leftOfOne),
+                       LayoutMap.builtIn.enKeysThatAreRuLetters.subtracting(leftOfOne))
+        for (en, ru) in LayoutMap.builtIn.enToRu where !leftOfOne.contains(en) {
+            XCTAssertEqual(t.enToRu[en], ru, "\(en)")
+        }
         for (en, ru) in LayoutMap.builtIn.delimiters { XCTAssertEqual(t.delimiters[en], ru, "\(en)") }
+    }
+
+    func testKeyLeftOfOneDependsOnKeyboardType() {
+        XCTAssertEqual(KeyboardLayouts.letterKeyCodes(iso: false).first, 50)
+        XCTAssertEqual(KeyboardLayouts.letterKeyCodes(iso: true).first, 10)
+        XCTAssertEqual(Set(KeyboardLayouts.letterKeyCodes(iso: true)), Set(KeyboardLayouts.letterKeyCodes(iso: false)))
     }
 
     /// Apple «Русская»: все буквы на месте, слова переводятся туда и обратно.
