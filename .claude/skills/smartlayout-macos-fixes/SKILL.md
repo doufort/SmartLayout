@@ -32,7 +32,9 @@ description: Как править Swift-код SmartLayout (Sources/SmartLayout
 - **Поля паролей**: `IsSecureEventInputEnabled()` в начале `handle`; `wordIsSecret` (один AX-запрос `TextAccess.focusedIsSecure(timeout: 0.1)` на слово); `TextAccess.read()` и горячие клавиши ИИ не читают `AXSecureTextField`. Любой новый путь, который читает текст или отправляет его ИИ, тоже должен это проверять.
 - **Таблица клавиш**: `LayoutMap.current` строится `KeyboardLayouts.table(en:ru:)` через `UCKeyTranslate` при запуске и при смене раскладки, `LayoutMap.builtIn` — запасной вариант. Если меняешь встроенные таблицы, обнови `tools/layout_map.py` (он читает их из Swift) и `KeyTableTests`.
 - **Приватность**: `aiAutoCheck` и `aiReadWindow` по умолчанию `false`, включение из меню идёт через `confirmSending`. Миграция для пользователей 1.0 — `Settings.migratePrivacyDefaults` (запускается до `register(defaults:)`). Ключ не уходит по `http://` за пределы локальной сети (`AIConfig.sendsKeyInsecurely`).
-- **Медленный проверщик**: `CorrectionEngine.noteDuration` и `isSlow` — раннее определение раскладки на минуту выключается. Новые синхронные вызовы `NSSpellChecker` оборачивай так же.
+- **Ничего медленного в обработчике нажатий**: на пробеле — только `evaluateCached` (частотный словарь `Lexicon` и кэш); неизвестное слово — `prefetch` (асинхронный `requestChecking`) и `lateFix`. Синхронный `evaluate` — только для Enter/Tab и только если `!engine.isSlow`. Не добавляй в обработчик синхронные вызовы `NSSpellChecker`, сеть или Accessibility без таймаута.
+- **ИИ**: автопроверка отменяется следующим нажатием (`autoTask`), ответы кэшируются (`AIResultCache`), системное сообщение (`AIClient.systemMessage`) должно оставаться одинаковым от запроса к запросу — меняющиеся данные клади в `userMessage`.
+- **Частотные словари** пересобираются `python3 tools/build_wordlists.py` (лицензия CC BY-SA 4.0, файл `Resources/WORDLISTS_LICENSE.txt` обязателен).
 
 ## Что ещё можно сделать
 
