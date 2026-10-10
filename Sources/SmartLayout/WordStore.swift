@@ -6,7 +6,11 @@ final class WordStore {
     /// Частые опечатки: неправильно -> правильно.
     private(set) var typos = [String: String]()
     private(set) var exceptions: Set<String>
-    let learning = LearningStore()
+    let learning: LearningStore
+    /// Ваш словарь: по умолчанию ~/Library/Application Support/SmartLayout/user_words.txt.
+    let userWordsURL: URL
+    private let defaults: UserDefaults
+    private let resources: Bundle
     private let exceptionsKey = "exceptions"
 
     static var supportDir: URL {
@@ -16,21 +20,24 @@ final class WordStore {
         return dir
     }
 
-    static var userWordsURL: URL { supportDir.appendingPathComponent("user_words.txt") }
-
-    init() {
-        exceptions = Set(UserDefaults.standard.stringArray(forKey: exceptionsKey) ?? [])
+    /// `directory`, `defaults` и `resources` подменяются в тестах, чтобы не трогать ваши настоящие данные.
+    init(directory: URL = WordStore.supportDir, defaults: UserDefaults = .standard, resources: Bundle = .main) {
+        self.defaults = defaults
+        self.resources = resources
+        userWordsURL = directory.appendingPathComponent("user_words.txt")
+        learning = LearningStore(url: directory.appendingPathComponent("learning.json"))
+        exceptions = Set(defaults.stringArray(forKey: exceptionsKey) ?? [])
         reload()
     }
 
     func reload() {
         var set = Set<String>()
         for name in ["slang_ru", "slang_en"] {
-            if let url = Bundle.main.url(forResource: name, withExtension: "txt") {
+            if let url = resources.url(forResource: name, withExtension: "txt") {
                 set.formUnion(Self.load(url))
             }
         }
-        let userURL = Self.userWordsURL
+        let userURL = userWordsURL
         if !FileManager.default.fileExists(atPath: userURL.path) {
             let header = "# Свои слова, по одному на строку. Они не будут исправляться.\n"
             try? header.write(to: userURL, atomically: true, encoding: .utf8)
@@ -40,7 +47,7 @@ final class WordStore {
 
         var map = [String: String]()
         for name in ["typos_ru", "typos_en"] {
-            guard let url = Bundle.main.url(forResource: name, withExtension: "txt") else { continue }
+            guard let url = resources.url(forResource: name, withExtension: "txt") else { continue }
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
             for line in text.split(whereSeparator: \.isNewline) where !line.hasPrefix("#") {
                 let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
@@ -59,7 +66,8 @@ final class WordStore {
 
     func contains(_ word: String) -> Bool {
         let w = word.lowercased()
-        return words.contains(w) || learning.learnedWords.contains(w) || learning.protectedWords.contains(w)
+        return words.contains(w) || learning.learnedWords.contains(w) || learning.typedWords.contains(w)
+            || learning.protectedWords.contains(w)
     }
 
     /// Известная опечатка: из файла typos или выученная на ваших правках.
@@ -69,10 +77,12 @@ final class WordStore {
         return learning.learnedTypos[w] ?? typos[w]
     }
 
-    /// Слова для подсказки ИИ: ваш словарь и выученное (до 150 штук).
+    /// Слова для подсказки ИИ: ваш словарь и то, что вы явно оставили (до 150 штук).
+    /// Слова, которые просто часто набирались (`typedWords`), сюда не входят:
+    /// среди них бывают ваши привычные опечатки, и ИИ должен иметь право их поправить.
     var glossaryForAI: [String] {
         var list = Array(learning.protectedWords) + Array(learning.learnedWords)
-        if let text = try? String(contentsOf: Self.userWordsURL, encoding: .utf8) {
+        if let text = try? String(contentsOf: userWordsURL, encoding: .utf8) {
             list += text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty && !$0.hasPrefix("#") }
         }
@@ -84,11 +94,11 @@ final class WordStore {
     func addException(_ token: String) {
         exceptions.insert(token.lowercased())
         learning.learnWord(token.trimmingCharacters(in: .punctuationCharacters))
-        UserDefaults.standard.set(Array(exceptions), forKey: exceptionsKey)
+        defaults.set(Array(exceptions), forKey: exceptionsKey)
     }
 
     func clearExceptions() {
         exceptions.removeAll()
-        UserDefaults.standard.removeObject(forKey: exceptionsKey)
+        defaults.removeObject(forKey: exceptionsKey)
     }
 }

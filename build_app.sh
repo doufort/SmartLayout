@@ -1,15 +1,20 @@
 #!/bin/bash
 # Собирает SmartLayout.app в папке build/.
 # ./build_app.sh install — ещё и ставит в /Applications и запускает.
+# VERSION=1.1 ./build_app.sh — номер версии в Info.plist (по умолчанию 1.0).
+# UNIVERSAL=1 ./build_app.sh — сборка для Apple Silicon и Intel (нужен Xcode).
 set -euo pipefail
 cd "$(dirname "$0")"
 
 APP=build/SmartLayout.app
-swift build -c release
+VERSION="${VERSION:-1.0}"
+BUILD_ARGS=(-c release)
+if [ "${UNIVERSAL:-0}" = "1" ]; then BUILD_ARGS+=(--arch arm64 --arch x86_64); fi
+swift build "${BUILD_ARGS[@]}"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$(swift build -c release --show-bin-path)/SmartLayout" "$APP/Contents/MacOS/SmartLayout"
+cp "$(swift build "${BUILD_ARGS[@]}" --show-bin-path)/SmartLayout" "$APP/Contents/MacOS/SmartLayout"
 cp Resources/*.txt Resources/*.json "$APP/Contents/Resources/"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -22,7 +27,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>com.dmitry.smartlayout</string>
   <key>CFBundleExecutable</key><string>SmartLayout</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1</string>
+  <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>

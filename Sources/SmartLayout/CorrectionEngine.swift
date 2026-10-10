@@ -102,6 +102,10 @@ final class CorrectionEngine {
 
     private func looksRussian(enCore: String, ruCore: String) -> Bool {
         guard ruCore.count >= 3 else { return false }
+        // Адреса и сокращения (google.com, mail.ru, e.g.) тоже содержат «.,;'» внутри,
+        // но в русском нет слов с таким началом: «пщщпд…», «ьфшдю…», «уюпю».
+        // Берём 5 букв, а не 3: у github.io начало «пше» (пшено), а «пшерг» уже ни на что не похоже.
+        guard hasCompletions(String(ruCore.prefix(5)), lang: "ru") else { return false }
         if enCore.dropFirst().dropLast().contains(where: { LayoutMap.enKeysThatAreRuLetters.contains($0) }) {
             return true
         }

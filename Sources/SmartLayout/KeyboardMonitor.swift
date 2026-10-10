@@ -225,8 +225,12 @@ final class KeyboardMonitor {
         if let lang = fix.switchTo { switchLayout(to: lang) }
         typedReplaceTail(token.count, with: text)
 
-        let inserted = fix.replacement.count + 1
-        lastAction = LastAction(fix: fix, insertedCount: inserted, originalDelimiter: delimiter, previousLayout: layout)
+        // Отмена по Backspace — только если курсор остался в той же строке. Enter мог отправить
+        // сообщение, а Tab — перевести фокус в другое поле: там Backspace стёр бы чужой текст.
+        if case .char = delimiter {
+            let inserted = fix.replacement.count + 1
+            lastAction = LastAction(fix: fix, insertedCount: inserted, originalDelimiter: delimiter, previousLayout: layout)
+        }
         onFix?(fix)
         return true
     }

@@ -160,8 +160,13 @@ final class AIClient {
             var result: AIResult
             switch mode {
             case .fix: result = AIResult(text: Self.strip(Self.clean(content)), note: nil)
-            case .review: result = Self.parseReview(content)
-            case .improve: result = Self.parseImprove(content)
+            case .review, .improve:
+                // Обрезанный или битый JSON нельзя показывать как «исправленный текст»:
+                // иначе по ⌥↩ в поле вставится {"fixed": "...
+                guard let parsed = mode == .review ? Self.parseReview(content) : Self.parseImprove(content) else {
+                    throw AIError.badResponse("модель вернула неполный ответ")
+                }
+                result = parsed
             }
             if mode == .fix || mode == .review {
                 // Защита: правка не должна быть сильно длиннее исходника (модель захватила контекст).
@@ -241,8 +246,15 @@ final class AIClient {
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
-    private static func parseReview(_ content: String) -> AIResult {
+    /// Похоже ли на попытку ответить JSON (тогда текст как есть показывать нельзя).
+    static func looksLikeJSON(_ content: String) -> Bool {
+        let t = clean(content)
+        return t.hasPrefix("{") || t.contains("\"fixed\"") || t.contains("\"text\"")
+    }
+
+    static func parseReview(_ content: String) -> AIResult? {
         guard let obj = jsonObject(content), let fixed = obj["fixed"] as? String else {
+            if looksLikeJSON(content) { return nil }
             return AIResult(text: strip(clean(content)), note: nil)
         }
         let alt = (obj["alternative"] as? String).map(strip)
@@ -263,11 +275,12 @@ final class AIClient {
         return t
     }
 
-    private static func parseImprove(_ content: String) -> AIResult {
+    static func parseImprove(_ content: String) -> AIResult? {
         if let obj = jsonObject(content), let text = obj["text"] as? String {
             let note = (obj["note"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             return AIResult(text: strip(text), note: note)
         }
+        if looksLikeJSON(content) { return nil }
         return AIResult(text: strip(clean(content)), note: nil)
     }
 }

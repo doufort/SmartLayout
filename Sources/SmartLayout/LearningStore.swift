@@ -3,48 +3,71 @@ import Foundation
 /// Самообучение на ваших действиях. Всё хранится локально:
 /// ~/Library/Application Support/SmartLayout/learning.json
 ///
-/// - слово, которое вы набрали 3 раза и не исправили, становится «своим» и больше не исправляется;
+/// - слово, которое вы набрали 3 раза и не исправили, становится «своим» и больше не исправляется
+///   автоматически (но ИИ его по-прежнему может поправить: это могла быть ваша привычная опечатка);
 /// - если вы 2 раза приняли одну и ту же правку от ИИ, она начинает применяться сразу, без ИИ;
 /// - если вы 2 раза отклонили правку слова, ИИ получает его в списке «не трогать»;
-/// - выученные слова передаются ИИ как ваш словарь, чтобы он понимал ваш сленг.
+/// - слова, которые вы явно оставили (отменили исправление), передаются ИИ как ваш словарь.
 final class LearningStore {
     private struct Data: Codable {
         var unknownCounts: [String: Int] = [:]
-        var learnedWords: Set<String> = []
+        var learnedWords: Set<String> = []       // вы явно оставили слово (отмена по Backspace)
+        var typedWords: Set<String> = []         // набрано 3 раза и не исправлено
         var acceptedPairs: [String: Int] = [:]   // "было→стало": сколько раз принято
         var learnedTypos: [String: String] = [:]
         var rejectedCounts: [String: Int] = [:]
         var protectedWords: Set<String> = []
+
+        init() {}
+
+        // Каждое поле необязательно: файл от прошлой версии без нового поля не должен
+        // молча обнулять всё выученное.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            unknownCounts = try c.decodeIfPresent([String: Int].self, forKey: .unknownCounts) ?? [:]
+            learnedWords = try c.decodeIfPresent(Set<String>.self, forKey: .learnedWords) ?? []
+            typedWords = try c.decodeIfPresent(Set<String>.self, forKey: .typedWords) ?? []
+            acceptedPairs = try c.decodeIfPresent([String: Int].self, forKey: .acceptedPairs) ?? [:]
+            learnedTypos = try c.decodeIfPresent([String: String].self, forKey: .learnedTypos) ?? [:]
+            rejectedCounts = try c.decodeIfPresent([String: Int].self, forKey: .rejectedCounts) ?? [:]
+            protectedWords = try c.decodeIfPresent(Set<String>.self, forKey: .protectedWords) ?? []
+        }
     }
 
     private var data = Data()
-    private let url = WordStore.supportDir.appendingPathComponent("learning.json")
+    private let url: URL
     private var saveWork: DispatchWorkItem?
 
     static let learnAfterTyping = 3
     static let learnAfterAccepts = 2
     static let protectAfterRejects = 2
 
-    init() {
+    init(url: URL = WordStore.supportDir.appendingPathComponent("learning.json")) {
+        self.url = url
         if let raw = try? Foundation.Data(contentsOf: url),
            let decoded = try? JSONDecoder().decode(Data.self, from: raw) {
             data = decoded
         }
     }
 
+    /// Слова, которые вы явно оставили как есть. Их не правит ни движок, ни ИИ.
     var learnedWords: Set<String> { data.learnedWords }
+    /// Слова, которые вы просто часто набираете. Их не правит движок, но ИИ может предложить правку.
+    var typedWords: Set<String> { data.typedWords }
     var learnedTypos: [String: String] { data.learnedTypos }
     var protectedWords: Set<String> { data.protectedWords }
-    var learnedCount: Int { data.learnedWords.count + data.learnedTypos.count + data.protectedWords.count }
+    var learnedCount: Int {
+        data.learnedWords.count + data.typedWords.count + data.learnedTypos.count + data.protectedWords.count
+    }
 
     /// Слово не нашлось в словарях и не было исправлено.
     func noteUnknown(_ word: String) {
         let w = word.lowercased()
-        guard w.count >= 2, !data.learnedWords.contains(w) else { return }
+        guard w.count >= 2, !data.learnedWords.contains(w), !data.typedWords.contains(w) else { return }
         let n = (data.unknownCounts[w] ?? 0) + 1
         if n >= Self.learnAfterTyping {
             data.unknownCounts[w] = nil
-            data.learnedWords.insert(w)
+            data.typedWords.insert(w)
         } else {
             data.unknownCounts[w] = n
         }
@@ -69,7 +92,10 @@ final class LearningStore {
             let key = f + "→" + t
             let n = (data.acceptedPairs[key] ?? 0) + 1
             data.acceptedPairs[key] = n
-            if n >= Self.learnAfterAccepts && !data.learnedWords.contains(f) { data.learnedTypos[f] = to }
+            if n >= Self.learnAfterAccepts && !data.learnedWords.contains(f) {
+                data.learnedTypos[f] = to
+                data.typedWords.remove(f)   // правку приняли — значит, это всё-таки опечатка
+            }
             data.rejectedCounts[f] = nil
             data.protectedWords.remove(f)
         }
@@ -92,6 +118,15 @@ final class LearningStore {
     func reset() {
         data = Data()
         scheduleSave()
+    }
+
+    /// Записать несохранённые изменения сразу, не дожидаясь отложенного сохранения.
+    /// Если изменений нет, файл не трогаем (вторая копия приложения не должна затирать первую).
+    func saveNow() {
+        guard let pending = saveWork else { return }
+        pending.cancel()
+        saveWork = nil
+        if let raw = try? JSONEncoder().encode(data) { try? raw.write(to: url, options: .atomic) }
     }
 
     private func scheduleSave() {

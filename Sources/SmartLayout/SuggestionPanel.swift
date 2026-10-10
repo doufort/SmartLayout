@@ -146,11 +146,13 @@ final class SuggestionPanel: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: work)
     }
 
-    /// Закрыть без принятия (Esc, продолжение набора, таймаут) — считается отказом.
-    func hide() {
+    /// Закрыть без принятия. Отказом (`rejected: true`) считаются только Esc и кнопка «Отмена»:
+    /// продолжение набора, таймаут или новая подсказка ничего не говорят о том, согласны ли вы
+    /// с правкой, и не должны учить ИИ «не трогать» слово.
+    func hide(rejected: Bool = false) {
         let reject = onReject
         close()
-        reject?()
+        if rejected { reject?() }
     }
 
     private func close() {
@@ -183,7 +185,7 @@ final class SuggestionPanel: NSObject {
         action?()
     }
 
-    @objc private func cancelTapped() { hide() }
+    @objc private func cancelTapped() { hide(rejected: true) }
 }
 
 // Модификаторы Carbon: optionKey = 1 << 11, shiftKey = 1 << 9.

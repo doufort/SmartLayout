@@ -78,28 +78,52 @@ enum TextAccess {
 
 /// Запасной путь через буфер обмена (Cmd+C / Cmd+V) с восстановлением содержимого.
 enum Clipboard {
-    static func paste(_ text: String) {
-        let pb = NSPasteboard.general
-        let saved = pb.string(forType: .string)
+    /// Полная копия содержимого буфера: все элементы и все их типы (картинки, файлы, RTF),
+    /// а не только текст. Иначе после исправления пропадает скопированная картинка.
+    typealias Snapshot = [[NSPasteboard.PasteboardType: Data]]
+
+    static func snapshot(_ pb: NSPasteboard) -> Snapshot {
+        (pb.pasteboardItems ?? []).map { item in
+            var types = [NSPasteboard.PasteboardType: Data]()
+            for t in item.types { if let d = item.data(forType: t) { types[t] = d } }
+            return types
+        }
+    }
+
+    static func restore(_ snapshot: Snapshot, to pb: NSPasteboard) {
+        pb.clearContents()
+        guard !snapshot.isEmpty else { return }
+        let items: [NSPasteboardItem] = snapshot.map { types in
+            let item = NSPasteboardItem()
+            for (t, d) in types { item.setData(d, forType: t) }
+            return item
+        }
+        pb.writeObjects(items)
+    }
+
+    static func paste(_ text: String, pasteboard pb: NSPasteboard = .general) {
+        let saved = snapshot(pb)
         pb.clearContents()
         pb.setString(text, forType: .string)
+        let ours = pb.changeCount
         KeySender.chord(keyCode: 9, flags: .maskCommand) // Cmd+V
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            pb.clearContents()
-            if let saved { pb.setString(saved, forType: .string) }
+            // Если за это время вы сами что-то скопировали, не затираем.
+            guard pb.changeCount == ours else { return }
+            Clipboard.restore(saved, to: pb)
         }
     }
 
     /// Копирует выделенный текст активного приложения.
-    static func copySelection(completion: @escaping (String?) -> Void) {
-        let pb = NSPasteboard.general
-        let saved = pb.string(forType: .string)
+    static func copySelection(pasteboard pb: NSPasteboard = .general, completion: @escaping (String?) -> Void) {
+        let saved = snapshot(pb)
         let before = pb.changeCount
         KeySender.chord(keyCode: 8, flags: .maskCommand) // Cmd+C
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            let copied = pb.changeCount != before ? pb.string(forType: .string) : nil
-            pb.clearContents()
-            if let saved { pb.setString(saved, forType: .string) }
+            // Ничего не выделено — буфер не менялся, и трогать его не нужно.
+            guard pb.changeCount != before else { completion(nil); return }
+            let copied = pb.string(forType: .string)
+            Clipboard.restore(saved, to: pb)
             completion(copied)
         }
     }

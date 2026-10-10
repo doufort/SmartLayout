@@ -50,10 +50,11 @@ final class AIController {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
+    /// Esc: отменить запрос и отклонить показанную подсказку.
     func cancel() {
         pending?.cancel()
         requestID += 1
-        panel.hide()
+        panel.hide(rejected: true)
     }
 
     /// Сколько текста править за раз. Тесты показали, что на ~3000 символах модель обрезает ответ,

@@ -121,17 +121,18 @@ final class LearningTests: XCTestCase {
     }
 
     func testLearnUnknownAfterThreeTimes() {
-        let l = LearningStore()
+        let l = LearningStore(url: TestFiles.tempFile("learning.json"))
         l.reset()
         let w = "кринжатинабот"
         l.noteUnknown(w); l.noteUnknown(w)
         XCTAssertFalse(l.learnedWords.contains(w))
         l.noteUnknown(w)
-        XCTAssertTrue(l.learnedWords.contains(w))
+        XCTAssertTrue(l.typedWords.contains(w))
+        XCTAssertFalse(l.learnedWords.contains(w), "набранное 3 раза не должно считаться явно подтверждённым")
     }
 
     func testAcceptAndReject() {
-        let l = LearningStore()
+        let l = LearningStore(url: TestFiles.tempFile("learning.json"))
         l.reset()
         l.noteAccepted([("сдесь", "здесь")])
         XCTAssertNil(l.learnedTypos["сдесь"])
@@ -142,20 +143,20 @@ final class LearningTests: XCTestCase {
     }
 
     func testStressManyUnknownWords() {
-        let l = LearningStore()
+        let l = LearningStore(url: TestFiles.tempFile("learning.json"))
         l.reset()
         measure { for i in 0..<20_000 { l.noteUnknown("слово\(i % 3000)") } }
-        XCTAssertGreaterThan(l.learnedWords.count, 0)
+        XCTAssertGreaterThan(l.typedWords.count, 0)
     }
 
     /// Переполнение: редкие одноразовые слова вытесняются, а частые продолжают учиться.
     func testOverflowKeepsFrequentWords() {
-        let l = LearningStore()
+        let l = LearningStore(url: TestFiles.tempFile("learning.json"))
         l.reset()
         for i in 0..<12_000 {
             l.noteUnknown("одноразовое\(i)")
             if i % 1000 == 0 { l.noteUnknown("частоеслово") }
         }
-        XCTAssertTrue(l.learnedWords.contains("частоеслово"))
+        XCTAssertTrue(l.typedWords.contains("частоеслово"))
     }
 }

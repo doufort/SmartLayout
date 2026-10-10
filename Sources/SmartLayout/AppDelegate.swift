@@ -80,6 +80,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !AIConfig.current.isConfigured { settingsWindow.show() }
     }
 
+    /// Выученное сохраняется с задержкой в 2 секунды — при выходе дописываем несохранённое.
+    func applicationWillTerminate(_ notification: Notification) {
+        store.learning.saveNow()
+    }
+
     // MARK: Разрешения
 
     private func startWhenTrusted() {
@@ -215,7 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func clearMemory() { ai.memory.clear() }
     @objc private func toggleAICheck() { Settings.shared.aiAutoCheck.toggle(); rebuildMenu() }
     @objc private func openSettings() { settingsWindow.show() }
-    @objc private func openUserWords() { NSWorkspace.shared.open(WordStore.userWordsURL) }
+    @objc private func openUserWords() { NSWorkspace.shared.open(store.userWordsURL) }
     @objc private func reloadWords() { store.reload(); engine.clearCaches(); rebuildMenu() }
     @objc private func resetLearning() {
         store.learning.reset(); ai.style.resetRecent(); engine.clearCaches(); rebuildMenu()
