@@ -127,7 +127,8 @@ def test_layout_tables_match_sources(binary_strings):
 
 
 def test_ai_endpoints(binary_strings):
-    urls = {s for s in binary_strings if s.startswith(("http://", "https://"))}
+    # Только адреса с хостом: голая строка "http://" — это проверка схемы в AIConfig, а не адрес.
+    urls = {s for s in binary_strings if re.match(r"^https?://[^\s/]+", s)}
     assert urls, "не найдены адреса AI-провайдеров"
     for u in urls:
         if u.startswith("http://"):
