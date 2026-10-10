@@ -19,8 +19,8 @@ description: Как править Swift-код SmartLayout (Sources/SmartLayout
 
 ## Правила
 
-- Любое исправление сопровождай тестом. Логику без UI тестируй в `Tests/SmartLayoutTests/` через XCTest, конфигурацию сборки — в `tests/test_sources.py` или `tests/test_bundle.py`.
-- **Тесты не трогают настоящие данные пользователя.** Создавай хранилища только через `TestFiles.wordStore()` и `LearningStore(url: TestFiles.tempFile(...))`. `LearningStore()` и `WordStore()` без аргументов в тестах запрещены, это проверяет `tests/test_sources.py`.
+- Любое исправление сопровождай тестом. Логику без UI тестируй в `Tests/SmartLayoutTests/` через XCTest, конфигурацию сборки — в `pytests/test_sources.py` или `pytests/test_bundle.py`.
+- **Тесты не трогают настоящие данные пользователя.** Создавай хранилища только через `TestFiles.wordStore()` и `LearningStore(url: TestFiles.tempFile(...))`. `LearningStore()` и `WordStore()` без аргументов в тестах запрещены, это проверяет `pytests/test_sources.py`.
 - Обработчик event tap должен работать быстро: никаких сетевых запросов, а синхронный `NSSpellChecker` только через кэши `CorrectionEngine`.
 - Синтетические нажатия отправляй только через `KeySender` (помечены `syntheticTag`), иначе перехватчик обработает их как ваши.
 - Если меняешь формат `learning.json`, новые поля декодируй через `decodeIfPresent`, иначе у пользователей обнулится выученное.

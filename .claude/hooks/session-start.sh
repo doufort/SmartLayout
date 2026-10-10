@@ -14,7 +14,7 @@ fi
 
 if ! command -v 7z >/dev/null 2>&1; then
   (apt-get update -qq && apt-get install -y -qq p7zip-full) >/dev/null 2>&1 \
-    || echo "session-start: 7z не установлен, тесты сборки (tests/test_bundle.py) будут пропущены" >&2
+    || echo "session-start: 7z не установлен, тесты сборки (pytests/test_bundle.py) будут пропущены" >&2
 fi
 
 echo 'export PYTHONDONTWRITEBYTECODE=1' >> "${CLAUDE_ENV_FILE:-/dev/null}"

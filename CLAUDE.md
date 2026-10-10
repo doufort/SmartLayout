@@ -6,7 +6,7 @@
 
 - `Sources/SmartLayout/` — код приложения, `Tests/SmartLayoutTests/` — XCTest (`swift test`, только на Mac).
 - `Resources/` — словари (`slang_*`, `typos_*`) и `style_profile.json`, копируются в бандл скриптом `build_app.sh`.
-- `tests/` — pytest: словари, исходники и build-скрипт, а также релизная сборка из `dist/*.dmg`. Работает на Linux.
+- `pytests/` — pytest: словари, исходники и build-скрипт, а также релизная сборка из `dist/*.dmg`. Работает на Linux.
 - `tools/` — `check_dicts.py` (валидатор словарей), `bundle.py` (разбор .app/.dmg без macOS), `swift_source.py` и `layout_map.py` (константы, прочитанные из Swift-исходников), `ai_load_test.py` (нагрузочный тест YandexGPT, нужны ключи).
 - `dist/` — выпущенные сборки. Не редактировать (это блокирует хук).
 

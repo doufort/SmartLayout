@@ -43,7 +43,7 @@ esac
 
 # Fast regression run for anything that touches app data or tooling.
 case "$file" in
-  */Resources/*|*/Sources/*|*/Tests/*|*/tools/*|*/tests/*|*/build_app.sh)
+  */Resources/*|*/Sources/*|*/Tests/*|*/tools/*|*/pytests/*|*/build_app.sh)
     if ! out=$(python3 -m pytest -q -x --no-header -p no:cacheprovider 2>&1); then
       printf 'Тесты упали после правки %s:\n%s\n' "$file" "$(printf '%s' "$out" | tail -25)" >&2
       exit 2

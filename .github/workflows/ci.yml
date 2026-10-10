@@ -32,4 +32,4 @@ jobs:
       - name: Check the fresh bundle
         run: |
           pip3 install --break-system-packages -r requirements-dev.txt
-          SMARTLAYOUT_APP=build/SmartLayout.app python3 -m pytest tests/test_bundle.py
+          SMARTLAYOUT_APP=build/SmartLayout.app python3 -m pytest pytests/test_bundle.py

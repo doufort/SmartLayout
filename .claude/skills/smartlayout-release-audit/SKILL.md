@@ -9,7 +9,7 @@ description: Проверка новой сборки SmartLayout (.dmg/.app) п
 
 ## Шаги
 
-1. Положи сборку в `dist/SmartLayout-<версия>.dmg` (старые `.dmg` из `dist/` убери: тесты берут последний по имени) или задай `SMARTLAYOUT_APP=/путь/к/.app|.dmg`. Свежую локальную сборку проверяй так: `./build_app.sh && SMARTLAYOUT_APP=build/SmartLayout.app python3 -m pytest tests/test_bundle.py`.
+1. Положи сборку в `dist/SmartLayout-<версия>.dmg` (старые `.dmg` из `dist/` убери: тесты берут последний по имени) или задай `SMARTLAYOUT_APP=/путь/к/.app|.dmg`. Свежую локальную сборку проверяй так: `./build_app.sh && SMARTLAYOUT_APP=build/SmartLayout.app python3 -m pytest pytests/test_bundle.py`.
 2. Отчёт: `python3 tools/bundle.py dist/SmartLayout-<версия>.dmg` (версия, архитектуры, тип подписи, hardened runtime).
 3. Тесты: `python3 -m pytest`.
 4. Разбор результатов:
