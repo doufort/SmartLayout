@@ -14,18 +14,26 @@ enum InputSource {
         return languages(of: src).first.map { String($0.prefix(2)) }
     }
 
-    /// Переключает на первую доступную раскладку указанного языка.
-    @discardableResult
-    static func select(language: String) -> Bool {
+    /// Раскладка указанного языка, на которую переключаемся: текущая, если она этого языка,
+    /// иначе первая включённая.
+    static func source(language: String) -> TISInputSource? {
+        if let current = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+           languages(of: current).first?.hasPrefix(language) == true {
+            return current
+        }
         let filter: [String: Any] = [
             kTISPropertyInputSourceCategory as String: kTISCategoryKeyboardInputSource as String,
             kTISPropertyInputSourceIsSelectCapable as String: true
         ]
         guard let list = TISCreateInputSourceList(filter as CFDictionary, false)?
-            .takeRetainedValue() as? [TISInputSource] else { return false }
-        for src in list where languages(of: src).first?.hasPrefix(language) == true {
-            return TISSelectInputSource(src) == noErr
-        }
-        return false
+            .takeRetainedValue() as? [TISInputSource] else { return nil }
+        return list.first { languages(of: $0).first?.hasPrefix(language) == true }
+    }
+
+    /// Переключает на раскладку указанного языка.
+    @discardableResult
+    static func select(language: String) -> Bool {
+        guard let src = source(language: language) else { return false }
+        return TISSelectInputSource(src) == noErr
     }
 }

@@ -19,6 +19,11 @@ final class CorrectionEngine {
     private var validCache = [String: Bool]()
     private var prefixCache = [String: Bool]()
     private let cacheLimit = 20_000
+    /// Проверщик macOS иногда отвечает секунду и дольше (первая загрузка словаря, нагрузка).
+    /// Из обработчика нажатий так ждать нельзя: macOS отключит перехват. Если ответ был
+    /// медленным, раннее определение раскладки на минуту выключается (проверка в конце слова остаётся).
+    static let slowCallLimit: TimeInterval = 0.3
+    private(set) var slowUntil: Date?
 
     init(store: WordStore) { self.store = store }
 
@@ -56,8 +61,10 @@ final class CorrectionEngine {
         guard word.allSatisfy({ isLetter($0) || $0 == "-" || $0 == "'" || $0 == "’" }) else { return false }
         let key = lang + ":" + word.lowercased()
         if let cached = validCache[key] { return cached }
+        let started = Date()
         let range = checker.checkSpelling(of: word, startingAt: 0, language: spellLanguage(lang),
                                           wrap: false, inSpellDocumentWithTag: tag, wordCount: nil)
+        noteDuration(since: started)
         let ok = range.location == NSNotFound
         if validCache.count > cacheLimit { validCache.removeAll() }
         validCache[key] = ok
@@ -71,12 +78,29 @@ final class CorrectionEngine {
         let key = lang + ":" + prefix.lowercased()
         if let cached = prefixCache[key] { return cached }
         let range = NSRange(location: 0, length: (prefix as NSString).length)
+        let started = Date()
         let list = checker.completions(forPartialWordRange: range, in: prefix,
                                        language: spellLanguage(lang), inSpellDocumentWithTag: tag) ?? []
+        noteDuration(since: started)
         let ok = !list.isEmpty || store.words.contains { $0.hasPrefix(prefix.lowercased()) }
         if prefixCache.count > cacheLimit { prefixCache.removeAll() }
         prefixCache[key] = ok
         return ok
+    }
+
+    func noteDuration(since start: Date, now: Date = Date()) {
+        if now.timeIntervalSince(start) > Self.slowCallLimit { slowUntil = now.addingTimeInterval(60) }
+    }
+
+    var isSlow: Bool { slowUntil.map { Date() < $0 } ?? false }
+
+    /// Первый запрос к словарям медленный: делаем его при запуске, а не на первом нажатии.
+    func warmUp() {
+        for (word, lang) in [("привет", "ru"), ("hello", "en")] {
+            _ = isValid(word, lang: lang)
+            _ = hasCompletions(String(word.prefix(3)), lang: lang)
+        }
+        slowUntil = nil   // медленный прогрев не в счёт
     }
 
     // MARK: Опечатки
@@ -163,7 +187,7 @@ final class CorrectionEngine {
     /// Срабатывает, только если в текущем языке нет слов с таким началом,
     /// а в другом языке есть.
     func evaluatePrefix(_ prefix: String, layout: String) -> Fix? {
-        guard Settings.shared.autoSwitch, (3...5).contains(prefix.count) else { return nil }
+        guard Settings.shared.autoSwitch, (3...5).contains(prefix.count), !isSlow else { return nil }
         guard layout == "en" || layout == "ru", !store.isException(prefix) else { return nil }
         let to = layout == "en" ? "ru" : "en"
         let converted = LayoutMap.convert(prefix, from: layout)

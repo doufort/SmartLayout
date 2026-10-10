@@ -80,11 +80,11 @@ final class ConversationMemory {
     }
 
     /// Текст разговора для модели (до 3000 символов): экран + ваши сообщения за последние N минут.
-    func contextText(key: String) -> String {
+    func contextText(key: String, includeScreen: Bool = true) -> String {
         queue.sync { () -> String in
             prune()
             var parts: [String] = []
-            if let s = screen[key] { parts.append("Текст в окне (переписка, может включать сообщения собеседника):\n" + s.text) }
+            if includeScreen, let s = screen[key] { parts.append("Текст в окне (переписка, может включать сообщения собеседника):\n" + s.text) }
             let my = (mine[key] ?? []).map { $0.text }
             if !my.isEmpty { parts.append("Что автор уже написал в этом окне:\n" + my.joined(separator: "\n")) }
             let all = parts.joined(separator: "\n\n")
@@ -93,6 +93,9 @@ final class ConversationMemory {
     }
 
     func clear() { queue.sync { mine.removeAll(); screen.removeAll() } }
+
+    /// Забыть снимки окон (после того как вы запретили читать текст окна).
+    func clearScreen() { queue.sync { screen.removeAll() } }
 
     private func prune() {
         let cutoff = Date().addingTimeInterval(-minutes * 60)

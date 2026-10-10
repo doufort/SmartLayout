@@ -3,21 +3,38 @@ import Foundation
 /// Настройки приложения (хранятся в UserDefaults).
 final class Settings {
     static let shared = Settings()
-    private let d = UserDefaults.standard
+    private let d: UserDefaults
 
-    private init() {
+    /// `defaults` подменяется в тестах.
+    init(defaults: UserDefaults = .standard) {
+        d = defaults
+        migratePrivacyDefaults()
         d.register(defaults: [
             "autoSwitch": true,
             "autocorrect": true,
             "undoOnBackspace": true,
             "autocorrectGuess": false,
-            "aiAutoCheck": true,
+            // Отправлять текст ИИ можно только с явного согласия: в новой установке выключено.
+            "aiAutoCheck": false,
+            "aiReadWindow": false,
             "aiSuggestNext": true,
             "memoryMinutes": 30.0,
             "aiPause": 1.5,
             "aiBaseURL": "https://api.openai.com/v1",
             "aiModel": "gpt-4o-mini"
         ])
+    }
+
+    /// Версия 1.0 по умолчанию проверяла текст ИИ при паузе и читала текст окна.
+    /// У тех, кто уже пользовался приложением, сохраняем это поведение явно,
+    /// а в новой установке обе настройки выключены. Вызывается до `register(defaults:)`,
+    /// чтобы `object(forKey:)` видел только сохранённые значения.
+    private func migratePrivacyDefaults() {
+        guard d.object(forKey: "privacyMigrated") == nil else { return }
+        d.set(true, forKey: "privacyMigrated")
+        guard d.object(forKey: "loginItemConfigured") != nil else { return }   // новая установка
+        if d.object(forKey: "aiAutoCheck") == nil { d.set(true, forKey: "aiAutoCheck") }
+        if d.object(forKey: "aiReadWindow") == nil { d.set(true, forKey: "aiReadWindow") }
     }
 
     /// Автопереключение раскладки и исправление набранного слова.
@@ -63,6 +80,12 @@ final class Settings {
         set { d.set(newValue, forKey: "aiBaseURL") }
     }
 
+    /// Передавать ИИ видимый текст окна (переписку, включая сообщения собеседника).
+    var aiReadWindow: Bool {
+        get { d.bool(forKey: "aiReadWindow") }
+        set { d.set(newValue, forKey: "aiReadWindow") }
+    }
+
     /// Предлагать продолжение текста.
     var aiSuggestNext: Bool {
         get { d.bool(forKey: "aiSuggestNext") }
@@ -83,5 +106,27 @@ final class Settings {
     var aiModel: String {
         get { d.string(forKey: "aiModel") ?? "" }
         set { d.set(newValue, forKey: "aiModel") }
+    }
+
+    /// Сочетания «Исправить» и «Улучшить»: ⌃⌥F/⌃⌥I вместо ⌥⇧F/⌥⇧I.
+    /// ⌥⇧F и ⌥⇧I в раскладке U.S. печатают «Ï» и «ˆ», и пока работает SmartLayout, их не набрать.
+    var hotkeyControlOption: Bool {
+        get { d.bool(forKey: "hotkeyControlOption") }
+        set { d.set(newValue, forKey: "hotkeyControlOption") }
+    }
+
+    /// Модификаторы для подписи в меню.
+    var hotkeyLabel: String { hotkeyControlOption ? "⌃⌥" : "⌥⇧" }
+
+    /// Приложения, которые вы сами исключили (bundle id).
+    var excludedApps: Set<String> {
+        get { Set(d.stringArray(forKey: "excludedApps") ?? []) }
+        set { d.set(newValue.sorted(), forKey: "excludedApps") }
+    }
+
+    /// Приложения из списка исключений по умолчанию, которые вы включили обратно.
+    var allowedApps: Set<String> {
+        get { Set(d.stringArray(forKey: "allowedApps") ?? []) }
+        set { d.set(newValue.sorted(), forKey: "allowedApps") }
     }
 }

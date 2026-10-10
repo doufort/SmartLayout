@@ -16,9 +16,15 @@ import swift_source
 from layout_map import TABLES
 
 ESSENTIAL_KEYS = [
-    "CFBundleIdentifier", "CFBundleExecutable", "CFBundlePackageType",
-    "LSMinimumSystemVersion", "LSUIElement", "CFBundleShortVersionString",
+    "CFBundleIdentifier", "CFBundleExecutable", "CFBundlePackageType", "LSMinimumSystemVersion", "LSUIElement",
 ]
+
+
+def known_in_1_0(info, reason):
+    """Проблема из docs/AUDIT.md, исправленная в исходниках после 1.0: у релиза 1.0 она есть
+    (xfail), а у сборки из текущих исходников её быть не должно."""
+    if info["CFBundleShortVersionString"] == "1.0":
+        pytest.xfail(reason)
 
 
 @pytest.fixture(scope="session")
@@ -50,6 +56,7 @@ def test_info_plist_essentials(info, contents):
 
 
 def test_info_plist_matches_build_script(info):
+    """Версия у релиза и у текущего build_app.sh может отличаться, остальное — нет."""
     script = swift_source.build_script_plists()["Info.plist"]
     for key in ESSENTIAL_KEYS:
         assert info.get(key) == script.get(key), f"{key}: сборка {info.get(key)!r}, build_app.sh {script.get(key)!r}"
@@ -139,28 +146,36 @@ def test_banned_phrases_match_sources(binary_strings, phrase):
     assert any(phrase in s for s in binary_strings), f"{phrase!r} нет в сборке: сборка устарела?"
 
 
-# ---- Known defects in 1.0 (docs/AUDIT.md) -------------------------------------
+# ---- Known defects of 1.0 (docs/AUDIT.md), fixed in the sources ---------------
 
-@pytest.mark.xfail(strict=True, reason="AUDIT #1: сборка только arm64, на Intel Mac не запустится")
-def test_universal_binary(macho):
+def test_universal_binary(macho, info):
+    known_in_1_0(info, "AUDIT #1: релиз 1.0 собран только под arm64")
     assert set(macho.archs) >= {"arm64", "x86_64"}
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT #2: ad-hoc подпись без Developer ID и hardened runtime")
+def test_hardened_runtime(macho, info):
+    known_in_1_0(info, "AUDIT #2: релиз 1.0 подписан без hardened runtime")
+    assert all(s.hardened_runtime for s in macho.slices)
+
+
 def test_developer_id_signature(macho):
-    for s in macho.slices:
-        assert not s.adhoc and s.team_id and s.hardened_runtime
+    if any(s.adhoc for s in macho.slices):
+        pytest.xfail("AUDIT #2: ad-hoc подпись. Для раздачи соберите с SIGN_ID=\"Developer ID Application: …\"")
+    assert all(s.team_id for s in macho.slices)
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT #3: нет проверки полей пароля/Secure Input")
-def test_secure_input_guard(binary_strings):
+def test_secure_input_guard(binary_strings, info):
+    known_in_1_0(info, "AUDIT #3: в 1.0 нет проверки полей пароля и Secure Input")
     blob = "\n".join(binary_strings)
-    found = "AXSecureTextField" in blob or "IsSecureEventInputEnabled" in blob
-    assert found, "в бинарнике нет ни AXSecureTextField, ни IsSecureEventInputEnabled"
+    assert "AXSecureTextField" in blob and "IsSecureEventInputEnabled" in blob
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT #4: нет списка приложений-исключений (терминалы, IDE)")
-def test_app_exclusion_list(binary_strings):
+def test_app_exclusion_list(binary_strings, info):
+    known_in_1_0(info, "AUDIT #4: в 1.0 нет исключений по приложениям")
     blob = "\n".join(binary_strings)
-    found = "com.apple.Terminal" in blob or "com.googlecode.iterm2" in blob
-    assert found, "в бинарнике нет bundle id терминалов для исключения"
+    assert "com.apple.Terminal" in blob and "com.googlecode.iterm2" in blob
+
+
+def test_dynamic_layout_table(binary_strings, info):
+    known_in_1_0(info, "AUDIT #5: в 1.0 только встроенная таблица «Русская — ПК»")
+    assert any("UCKeyTranslate" in s for s in binary_strings)

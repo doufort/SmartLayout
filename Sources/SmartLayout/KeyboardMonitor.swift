@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import CoreGraphics
 
 /// Перехватывает нажатия клавиш, собирает текущее слово и
@@ -25,6 +26,8 @@ final class KeyboardMonitor {
     private(set) var typedText = ""
     private var switchedAt: Date?           // когда мы сами переключили раскладку
     private var earlyDone = false          // раннее определение уже сработало для этого слова
+    /// Текущее слово набирается в поле пароля: не исправляем, не учимся, не запоминаем.
+    private var wordIsSecret = false
     /// Текущая раскладка (кэш, обновляется при переключении).
     private(set) var layout = InputSource.currentLanguage() ?? "en"
     private var lastAction: LastAction?
@@ -76,6 +79,7 @@ final class KeyboardMonitor {
         buffer = ""
         typedText = ""
         earlyDone = false
+        wordIsSecret = false
         lastAction = nil
     }
 
@@ -129,13 +133,19 @@ final class KeyboardMonitor {
         if type == .leftMouseDown || type == .rightMouseDown { reset(); return pass }
         guard type == .keyDown else { return pass }
 
+        // Терминалы, редакторы кода, менеджеры паролей и защищённый ввод — не вмешиваемся.
+        if AppExclusions.frontmostExcluded || IsSecureEventInputEnabled() {
+            if !buffer.isEmpty || !typedText.isEmpty { reset() }
+            return pass
+        }
+
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
 
         // Сочетания с Cmd/Ctrl — это команды, а не текст.
-        // Наши сочетания ⌥⇧F, ⌥⇧I и ⌥↩ не должны сбрасывать набранный текст.
-        if flags.contains(.maskAlternate), !flags.contains(.maskCommand), !flags.contains(.maskControl),
-           [3, 34, 36, 48].contains(keyCode) {
+        // Наши сочетания ⌥⇧F / ⌃⌥F, ⌥⇧I / ⌃⌥I, ⌥↩ и ⌥⇥ не должны сбрасывать набранный текст.
+        if flags.contains(.maskAlternate), !flags.contains(.maskCommand),
+           [3, 34].contains(keyCode) || (!flags.contains(.maskControl) && [36, 48].contains(keyCode)) {
             return pass
         }
         if flags.contains(.maskCommand) || flags.contains(.maskControl) || flags.contains(.maskAlternate) {
@@ -185,7 +195,11 @@ final class KeyboardMonitor {
         }
 
         if isWordChar(ch, layout: layout) {
+            // Один запрос к Accessibility на слово: не поле ли это пароля
+            // (браузеры и Electron не всегда включают защищённый ввод).
+            if buffer.isEmpty { wordIsSecret = TextAccess.focusedIsSecure(timeout: 0.1) }
             buffer.append(ch)
+            if wordIsSecret { return pass }
             typedReplaceTail(0, with: String(ch))
             if buffer.count > 64 { buffer = "" } // это уже не слово
             if !earlyDone, let fix = engine.evaluatePrefix(buffer, layout: layout) {
@@ -196,7 +210,7 @@ final class KeyboardMonitor {
             return pass
         }
         if boundary(delimiter: .char(ch), layout: layout) { return nil }
-        typedReplaceTail(0, with: String(ch))
+        if !wordIsSecret { typedReplaceTail(0, with: String(ch)) }
         return pass
     }
 
@@ -213,7 +227,7 @@ final class KeyboardMonitor {
         let token = buffer
         buffer = ""
         earlyDone = false
-        guard !token.isEmpty, let fix = engine.evaluate(token: token, layout: layout) else { return false }
+        guard !token.isEmpty, !wordIsSecret, let fix = engine.evaluate(token: token, layout: layout) else { return false }
 
         KeySender.backspace(times: token.count)
         var text = fix.replacement

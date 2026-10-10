@@ -1,6 +1,8 @@
 import Foundation
 
 /// Стиль автора: описание и примеры его текстов.
+/// - ~/Library/Application Support/SmartLayout/style_profile.json: ваш профиль, если он там есть
+///   (так сборку можно отдать другим людям без вашего профиля внутри);
 /// - Resources/style_profile.json: начальный профиль, собранный по анкете;
 /// - ~/Library/Application Support/SmartLayout/style_samples.json: ваши свежие тексты,
 ///   которые копятся сами (отправленные сообщения, принятые правки) и постоянно обновляют стиль.
@@ -13,15 +15,19 @@ final class StyleProfile {
 
     private var base = Profile()
     private var recent: [String] = []
-    private let recentURL = WordStore.supportDir.appendingPathComponent("style_samples.json")
+    private let recentURL: URL
     private let maxRecent = 40
     private var saveWork: DispatchWorkItem?
 
-    init() {
-        if let url = Bundle.main.url(forResource: "style_profile", withExtension: "json"),
-           let data = try? Data(contentsOf: url),
-           let p = try? JSONDecoder().decode(Profile.self, from: data) {
-            base = p
+    init(directory: URL = WordStore.supportDir, resources: Bundle = .main) {
+        recentURL = directory.appendingPathComponent("style_samples.json")
+        let candidates = [directory.appendingPathComponent("style_profile.json"),
+                          resources.url(forResource: "style_profile", withExtension: "json")]
+        for case let url? in candidates {
+            if let data = try? Data(contentsOf: url), let p = try? JSONDecoder().decode(Profile.self, from: data) {
+                base = p
+                break
+            }
         }
         if let data = try? Data(contentsOf: recentURL),
            let list = try? JSONDecoder().decode([String].self, from: data) {
@@ -31,6 +37,7 @@ final class StyleProfile {
 
     /// Слова из профиля — добавляются к словарю, чтобы не исправлялись.
     var words: [String] { base.words }
+    var descriptionText: String { base.description }
 
     /// Запомнить свежий текст автора (только осмысленные фразы).
     func addSample(_ text: String) {

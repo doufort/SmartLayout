@@ -27,9 +27,15 @@ jobs:
         run: swift build
       - name: Unit tests
         run: swift test
-      - name: Build app bundle
-        run: ./build_app.sh
+      - name: Build universal app and DMG
+        run: ./build_app.sh dmg
       - name: Check the fresh bundle
         run: |
+          lipo -archs build/SmartLayout.app/Contents/MacOS/SmartLayout
           pip3 install --break-system-packages -r requirements-dev.txt
           SMARTLAYOUT_APP=build/SmartLayout.app python3 -m pytest pytests/test_bundle.py
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmartLayout-dmg
+          path: build/SmartLayout-*.dmg

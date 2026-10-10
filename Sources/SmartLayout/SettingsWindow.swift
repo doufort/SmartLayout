@@ -9,7 +9,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let keyField = NSSecureTextField()
     private let folderField = NSTextField()
     private let autoCheckBox = NSButton(checkboxWithTitle: "Проверять пунктуацию и ошибки при паузе в наборе", target: nil, action: nil)
+    private let readWindowBox = NSButton(checkboxWithTitle: "Учитывать текст окна (переписку, в том числе сообщения собеседника)", target: nil, action: nil)
     private let pauseField = NSTextField()
+    private let hotkeyPopup = NSPopUpButton()
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
     private let client = AIClient()
 
@@ -36,6 +38,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         keyField.placeholderString = "API-ключ (для Ollama не нужен)"
         folderField.placeholderString = "ID каталога Yandex Cloud (b1g…), только для YandexGPT"
         pauseField.placeholderString = "1.5"
+        hotkeyPopup.addItems(withTitles: ["⌥⇧F исправить, ⌥⇧I улучшить", "⌃⌥F исправить, ⌃⌥I улучшить"])
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.preferredMaxLayoutWidth = 480
 
@@ -51,7 +54,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             [label("Ключ:"), keyField],
             [label("Каталог:"), folderField],
             [label("Пауза, сек:"), pauseField],
-            [NSGridCell.emptyContentView, autoCheckBox]
+            [label("Сочетания:"), hotkeyPopup],
+            [NSGridCell.emptyContentView, autoCheckBox],
+            [NSGridCell.emptyContentView, readWindowBox]
         ])
         grid.column(at: 1).width = 360
         grid.rowSpacing = 10
@@ -67,6 +72,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         stack.spacing = 14
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         w.contentView = stack
+        w.setContentSize(stack.fittingSize)   // строк стало больше — окно подстраивается под содержимое
         window = w
     }
 
@@ -78,6 +84,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         folderField.stringValue = s.aiFolderID
         pauseField.stringValue = String(s.aiPause)
         autoCheckBox.state = s.aiAutoCheck ? .on : .off
+        readWindowBox.state = s.aiReadWindow ? .on : .off
+        hotkeyPopup.selectItem(at: s.hotkeyControlOption ? 1 : 0)
         let idx = AIConfig.presets.firstIndex { !$0.url.isEmpty && $0.url == s.aiBaseURL } ?? AIConfig.presets.count - 1
         providerPopup.selectItem(at: idx)
         statusLabel.stringValue = "Текст, который проверяется, отправляется выбранному сервису. Для полной приватности используйте Ollama на своём Mac."
@@ -106,7 +114,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         Keychain.save(c.apiKey)
         s.aiPause = max(0.5, Double(pauseField.stringValue.replacingOccurrences(of: ",", with: ".")) ?? 1.5)
         s.aiAutoCheck = autoCheckBox.state == .on
-        statusLabel.stringValue = "Сохранено."
+        s.aiReadWindow = readWindowBox.state == .on
+        s.hotkeyControlOption = hotkeyPopup.indexOfSelectedItem == 1
+        statusLabel.stringValue = c.sendsKeyInsecurely
+            ? "Сохранено, но ключ не будет отправляться по http://. Укажите адрес https://."
+            : "Сохранено."
         NotificationCenter.default.post(name: .smartLayoutSettingsChanged, object: nil)
     }
 

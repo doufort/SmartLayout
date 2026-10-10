@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon
 
 /// Чтение и замена текста в активном поле другого приложения через Accessibility API.
 struct FocusedText {
@@ -28,9 +29,34 @@ enum TextAccess {
         AXUIElementSetAttributeValue(el, "AXManualAccessibility" as CFString, kCFBooleanTrue)
     }
 
+    /// Какое-то приложение включило защищённый ввод (поле пароля, sudo в терминале).
+    /// Пока он включён, macOS не отдаёт нажатия перехватчику.
+    static func secureInputActive() -> Bool { IsSecureEventInputEnabled() }
+
+    /// Поле в фокусе — поле пароля (`AXSecureTextField`). Браузеры и Electron не всегда
+    /// включают защищённый ввод, поэтому проверяем и сам элемент.
+    static func isSecure(_ el: AXUIElement) -> Bool {
+        var subrole: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(el, kAXSubroleAttribute as CFString, &subrole) == .success else { return false }
+        return (subrole as? String) == (kAXSecureTextFieldSubrole as String)
+    }
+
+    /// `timeout` ограничивает ожидание ответа от зависшего приложения: из обработчика
+    /// нажатий нельзя ждать дольше доли секунды, иначе macOS отключит перехват.
+    static func focusedIsSecure(timeout: Float = 0) -> Bool {
+        let system = AXUIElementCreateSystemWide()
+        if timeout > 0 { _ = AXUIElementSetMessagingTimeout(system, timeout) }
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return false }
+        let el = value as! AXUIElement
+        if timeout > 0 { _ = AXUIElementSetMessagingTimeout(el, timeout) }
+        return isSecure(el)
+    }
+
     static func read() -> FocusedText? {
         enableManualAccessibility()
-        guard let el = focusedElement() else { return nil }
+        guard let el = focusedElement(), !isSecure(el) else { return nil }
         var val: CFTypeRef?
         var rng: CFTypeRef?
         guard AXUIElementCopyAttributeValue(el, kAXValueAttribute as CFString, &val) == .success,

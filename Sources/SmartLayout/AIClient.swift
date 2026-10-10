@@ -20,12 +20,32 @@ struct AIConfig {
         return model
     }
 
+    /// Модель на этом Mac или в домашней сети (Ollama и т.п.): текст не уходит в интернет.
+    var isLocal: Bool { Self.isLocalHost(URL(string: baseURL)?.host) }
+
+    static func isLocalHost(_ host: String?) -> Bool {
+        guard let h = host?.lowercased(), !h.isEmpty else { return false }
+        if h == "localhost" || h == "::1" || h.hasSuffix(".local") { return true }
+        let p = h.split(separator: ".").compactMap { Int($0) }
+        guard p.count == 4 else { return false }
+        return p[0] == 127 || p[0] == 10 || (p[0] == 192 && p[1] == 168) || (p[0] == 172 && (16...31).contains(p[1]))
+    }
+
+    /// Ключ нельзя отправлять открытым текстом в интернет.
+    var sendsKeyInsecurely: Bool {
+        !apiKey.isEmpty && baseURL.lowercased().hasPrefix("http://") && !isLocal
+    }
+
+    /// Название сервиса для сообщений пользователю.
+    var providerName: String {
+        Self.presets.first { !$0.url.isEmpty && baseURL.hasPrefix($0.url) }?.name ?? (URL(string: baseURL)?.host ?? baseURL)
+    }
+
     /// Ключ не нужен только для локальной модели (Ollama и т.п.).
     var isConfigured: Bool {
         guard !baseURL.isEmpty, !model.isEmpty else { return false }
-        let local = baseURL.contains("localhost") || baseURL.contains("127.0.0.1")
         if isYandex && !model.hasPrefix("gpt://") && folderID.isEmpty { return false }
-        return local || !apiKey.isEmpty
+        return isLocal || !apiKey.isEmpty
     }
 
     struct Preset { let name: String; let url: String; let model: String }
@@ -202,6 +222,9 @@ final class AIClient {
     }
 
     private func complete(messages: [[String: String]], config: AIConfig) async throws -> String {
+        guard !config.sendsKeyInsecurely else {
+            throw AIError.badResponse("ключ не отправляется по http:// — укажите адрес https://")
+        }
         let base = config.baseURL.hasSuffix("/") ? String(config.baseURL.dropLast()) : config.baseURL
         guard let url = URL(string: base + "/chat/completions") else { throw AIError.notConfigured }
 

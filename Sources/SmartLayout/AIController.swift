@@ -41,6 +41,8 @@ final class AIController {
         pending?.cancel()
         if panel.isVisible { panel.hide() }
         guard Settings.shared.aiAutoCheck, AIConfig.current.isConfigured else { return }
+        // Терминалы, редакторы кода и менеджеры паролей — набранное там ИИ не отправляется.
+        guard !AppExclusions.frontmostExcluded, !TextAccess.secureInputActive() else { return }
         typedSinceCheck += 1
         guard typedSinceCheck >= 10 else { return }
         let sentenceEnd = ".!?…\n".contains(ch)
@@ -75,6 +77,9 @@ final class AIController {
     }
 
     private func autoCheck() {
+        // За время паузы фокус мог перейти в поле пароля или в исключённое приложение.
+        guard !AppExclusions.frontmostExcluded, !TextAccess.secureInputActive(),
+              !TextAccess.focusedIsSecure() else { return }
         guard let field = TextAccess.read(), !field.value.isEmpty else { autoCheckTyped(); return }
         guard field.selection.length == 0 else { return }
         let ns = field.value as NSString
@@ -193,6 +198,11 @@ final class AIController {
     private func runOnTarget(_ mode: AIClient.Mode) {
         guard AIConfig.current.isConfigured else { onError?(AIError.notConfigured.localizedDescription); return }
         pending?.cancel()
+        // В поле пароля ничего не читаем: ни через Accessibility, ни через буфер, ни из набранного.
+        if TextAccess.secureInputActive() || TextAccess.focusedIsSecure() {
+            onError?("Это поле пароля: SmartLayout его не читает.")
+            return
+        }
 
         if let field = TextAccess.read(), !field.value.isEmpty {
             let ns = field.value as NSString
@@ -258,8 +268,10 @@ final class AIController {
         ctx.appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
         ctx.glossary = store.glossaryForAI + style.words
         let key = ConversationMemory.currentKey()
-        memory.captureScreen(key: key)   // обновится к следующей проверке
-        ctx.conversation = memory.contextText(key: key)
+        // Текст окна (в том числе сообщения собеседника) уходит ИИ только с вашего согласия.
+        let readWindow = Settings.shared.aiReadWindow
+        if readWindow { memory.captureScreen(key: key) }   // обновится к следующей проверке
+        ctx.conversation = memory.contextText(key: key, includeScreen: readWindow)
         ctx.style = style.promptBlock()
         ctx.slang = store.words.union(store.learning.learnedWords)
         return ctx

@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         watchdog = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             guard let self, self.running else { return }
             self.monitor.ensureEnabled()
+            self.updateTitle()   // значок защищённого ввода
         }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         rebuildMenu()
@@ -65,19 +66,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ai.typedText = { [weak self] in self?.monitor.typedText ?? "" }
         ai.replaceTyped = { [weak self] count, text in self?.monitor.replaceTyped(count: count, with: text) }
 
-        let mods = UInt32(optionKey | shiftKey)
+        registerHotKeys()
+        NotificationCenter.default.addObserver(forName: .smartLayoutSettingsChanged, object: nil, queue: .main) { [weak self] _ in
+            if !Settings.shared.aiReadWindow { self?.ai.memory.clearScreen() }
+            self?.registerHotKeys()
+            self?.rebuildMenu()
+        }
+        LayoutMap.reload()   // таблица клавиш по включённым раскладкам
+        AppExclusions.startTracking { [weak self] in self?.updateTitle(); self?.rebuildMenu() }
+        installEditMenu()
+        startWhenTrusted()
+        if !AIConfig.current.isConfigured { settingsWindow.show() }
+    }
+
+    /// ⌥⇧F / ⌥⇧I или ⌃⌥F / ⌃⌥I — как выбрано в настройках.
+    private func registerHotKeys() {
+        let mods = Settings.shared.hotkeyControlOption ? UInt32(controlKey | optionKey) : UInt32(optionKey | shiftKey)
         HotKeyCenter.shared.register(id: HotKeyID.fix, keyCode: UInt32(kVK_ANSI_F), modifiers: mods) { [weak self] in
             self?.ai.fixNow()
         }
         HotKeyCenter.shared.register(id: HotKeyID.improve, keyCode: UInt32(kVK_ANSI_I), modifiers: mods) { [weak self] in
             self?.ai.improveNow()
         }
-        NotificationCenter.default.addObserver(forName: .smartLayoutSettingsChanged, object: nil, queue: .main) { [weak self] _ in
-            self?.rebuildMenu()
-        }
-        installEditMenu()
-        startWhenTrusted()
-        if !AIConfig.current.isConfigured { settingsWindow.show() }
     }
 
     /// Выученное сохраняется с задержкой в 2 секунды — при выходе дописываем несохранённое.
@@ -89,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startWhenTrusted() {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        DispatchQueue.main.async { [weak self] in self?.engine.warmUp() }
         if AXIsProcessTrustedWithOptions(opts) && monitor.start() {
             running = true
             updateTitle()
@@ -109,12 +120,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Меню
 
     @objc private func layoutChanged() {
-        DispatchQueue.main.async { self.monitor.refreshLayout(); self.updateTitle() }
+        DispatchQueue.main.async { LayoutMap.reload(); self.monitor.refreshLayout(); self.updateTitle() }
     }
 
     private func updateTitle() {
         let lang = (InputSource.currentLanguage() ?? "--").uppercased()
         var title = running ? lang : "⚠︎ \(lang)"
+        // ⏸ — приложение в исключениях, 🔒 — защищённый ввод (поле пароля): SmartLayout не вмешивается.
+        if running && AppExclusions.frontmostExcluded { title += " ⏸" }
+        else if running && TextAccess.secureInputActive() { title += " 🔒" }
         if aiBusy { title += " …" }
         if let msg = flashMessage { title += "  \(msg.prefix(60))" }
         statusItem.button?.title = title
@@ -158,10 +172,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(toggle("Исправлять частые опечатки", Settings.shared.autocorrect, #selector(toggleAutocorrect)))
         menu.addItem(toggle("Угадывать исправления словарём macOS", Settings.shared.autocorrectGuess, #selector(toggleGuess)))
         menu.addItem(toggle("Отмена исправления по Backspace", Settings.shared.undoOnBackspace, #selector(toggleUndo)))
+        if let app = AppExclusions.frontmost, let id = app.bundleIdentifier {
+            let name = app.localizedName ?? id
+            if AppExclusions.isLocked(id) {
+                menu.addItem(withTitle: "Не работает в «\(name)» (менеджер паролей)", action: nil, keyEquivalent: "")
+            } else {
+                menu.addItem(toggle("Не работать в «\(name)»", AppExclusions.isExcluded(id), #selector(toggleExcludeApp)))
+            }
+        }
         menu.addItem(.separator())
-        menu.addItem(item("Исправить текст (⌥⇧F)", #selector(fixText)))
-        menu.addItem(item("Улучшить текст (⌥⇧I)", #selector(improveText)))
+        menu.addItem(item("Исправить текст (\(Settings.shared.hotkeyLabel)F)", #selector(fixText)))
+        menu.addItem(item("Улучшить текст (\(Settings.shared.hotkeyLabel)I)", #selector(improveText)))
         menu.addItem(toggle("Проверка ИИ при паузе в наборе", Settings.shared.aiAutoCheck, #selector(toggleAICheck)))
+        menu.addItem(toggle("Учитывать текст окна (переписку)", Settings.shared.aiReadWindow, #selector(toggleReadWindow)))
         menu.addItem(toggle("Предлагать продолжение текста", Settings.shared.aiSuggestNext, #selector(toggleNext)))
         let memoryMenu = NSMenu()
         for m in [10.0, 30.0, 60.0] {
@@ -218,7 +241,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleNext() { Settings.shared.aiSuggestNext.toggle(); rebuildMenu() }
     @objc private func setMemory(_ sender: NSMenuItem) { Settings.shared.memoryMinutes = Double(sender.tag); rebuildMenu() }
     @objc private func clearMemory() { ai.memory.clear() }
-    @objc private func toggleAICheck() { Settings.shared.aiAutoCheck.toggle(); rebuildMenu() }
+    @objc private func toggleAICheck() {
+        if !Settings.shared.aiAutoCheck && !confirmSending(
+            "Проверять текст ИИ при паузе в наборе?",
+            "Пока вы печатаете, текущий абзац отправляется выбранному сервису (\(AIConfig.current.providerName)). " +
+            "В терминалах, редакторах кода, менеджерах паролей и полях паролей проверка не работает.") { return }
+        Settings.shared.aiAutoCheck.toggle(); rebuildMenu()
+    }
+    @objc private func toggleReadWindow() {
+        if !Settings.shared.aiReadWindow && !confirmSending(
+            "Учитывать текст окна?",
+            "Вместе с вашим текстом ИИ будет получать видимый текст окна, в том числе сообщения собеседника. " +
+            "Так подсказки точнее понимают разговор. Для полной приватности используйте Ollama.") { return }
+        Settings.shared.aiReadWindow.toggle()
+        if !Settings.shared.aiReadWindow { ai.memory.clearScreen() }
+        rebuildMenu()
+    }
+    /// Явное согласие перед тем, как начать отправлять текст наружу.
+    private func confirmSending(_ title: String, _ text: String) -> Bool {
+        if AIConfig.current.isLocal { return true }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        alert.addButton(withTitle: "Включить")
+        alert.addButton(withTitle: "Отмена")
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+    @objc private func toggleExcludeApp() {
+        guard let id = AppExclusions.frontmost?.bundleIdentifier else { return }
+        AppExclusions.toggle(id)
+        monitor.reset(); updateTitle(); rebuildMenu()
+    }
     @objc private func openSettings() { settingsWindow.show() }
     @objc private func openUserWords() { NSWorkspace.shared.open(store.userWordsURL) }
     @objc private func reloadWords() { store.reload(); engine.clearCaches(); rebuildMenu() }
