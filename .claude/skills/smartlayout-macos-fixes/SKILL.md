@@ -1,6 +1,6 @@
 ---
 name: smartlayout-macos-fixes
-description: Как править Swift-код SmartLayout (Sources/SmartLayout) — перехват клавиш, движок исправлений, обучение, ИИ-подсказки, буфер обмена — и закрывать открытые пункты docs/AUDIT.md (исключения по приложениям, Secure Input, раскладка Apple «Русская», universal-сборка, подпись, приватность ИИ). Используй при любой правке *.swift или build_app.sh.
+description: Как править Swift-код SmartLayout (Sources/SmartLayout) — перехват клавиш, движок исправлений, обучение, ИИ-подсказки, буфер обмена — а также защиты из docs/AUDIT.md (исключения по приложениям, поля паролей, таблица раскладки через UCKeyTranslate, приватность ИИ, сборка и подпись). Используй при любой правке *.swift или build_app.sh.
 ---
 
 # Правки Swift-кода SmartLayout
@@ -26,16 +26,15 @@ description: Как править Swift-код SmartLayout (Sources/SmartLayout
 - Если меняешь формат `learning.json`, новые поля декодируй через `decodeIfPresent`, иначе у пользователей обнулится выученное.
 - Проверка: PostToolUse-хук запускает `swiftc -parse` для `.swift` (если `swiftc` есть) и pytest. Полные `swift build && swift test && ./build_app.sh` гоняет CI (`.github/workflows/ci.yml`, macOS). На Linux Swift-код не собрать, поэтому после пуша смотри результат CI.
 
-## Рецепты для открытых пунктов docs/AUDIT.md
+## Устройство защит (не ломать)
 
-**#4 Исключения по приложениям.** `Settings.excludedBundleIDs: Set<String>`. По умолчанию туда входят `com.apple.Terminal`, `com.googlecode.iterm2`, `dev.warp.Warp-Stable`, `net.kovidgoyal.kitty`, `com.github.wez.wezterm`, `com.microsoft.VSCode`, `com.apple.dt.Xcode`, `com.jetbrains.*`, `com.1password.1password`, `com.bitwarden.desktop`. Проверять `NSWorkspace.shared.frontmostApplication?.bundleIdentifier` в начале `KeyboardMonitor.handle` (сброс буфера, пропуск события) и в `AIController.userTyped`. Добавить пункт меню «Отключить в <приложение>». После этого сними `xfail` с `test_app_exclusion_list`.
+- **Исключения по приложениям**: `AppExclusions` (`locked` — менеджеры паролей, включить нельзя; `defaults` — терминалы и IDE; значение с точкой на конце — префикс). `frontmostExcluded` кэшируется по `didActivateApplicationNotification` и проверяется на каждое нажатие в `KeyboardMonitor.handle` и в `AIController.userTyped/autoCheck`. Новое приложение добавляй в список и в `AppExclusionsTests`.
+- **Поля паролей**: `IsSecureEventInputEnabled()` в начале `handle`; `wordIsSecret` (один AX-запрос `TextAccess.focusedIsSecure(timeout: 0.1)` на слово); `TextAccess.read()` и горячие клавиши ИИ не читают `AXSecureTextField`. Любой новый путь, который читает текст или отправляет его ИИ, тоже должен это проверять.
+- **Таблица клавиш**: `LayoutMap.current` строится `KeyboardLayouts.table(en:ru:)` через `UCKeyTranslate` при запуске и при смене раскладки, `LayoutMap.builtIn` — запасной вариант. Если меняешь встроенные таблицы, обнови `tools/layout_map.py` (он читает их из Swift) и `KeyTableTests`.
+- **Приватность**: `aiAutoCheck` и `aiReadWindow` по умолчанию `false`, включение из меню идёт через `confirmSending`. Миграция для пользователей 1.0 — `Settings.migratePrivacyDefaults` (запускается до `register(defaults:)`). Ключ не уходит по `http://` за пределы локальной сети (`AIConfig.sendsKeyInsecurely`).
+- **Медленный проверщик**: `CorrectionEngine.noteDuration` и `isSlow` — раннее определение раскладки на минуту выключается. Новые синхронные вызовы `NSSpellChecker` оборачивай так же.
 
-**#3 Secure Input.** В `KeyboardMonitor.handle`: `if IsSecureEventInputEnabled() { reset(); return pass }`. В `TextAccess.read()` не читать поле с `kAXSubroleAttribute == kAXSecureTextFieldSubrole`. Показывать неактивирующую плашку (`.nonactivatingPanel` и `orderFrontRegardless`, без `NSApp.activate`), как `SecureInputNotice.swift` в RuSwitcher.
+## Что ещё можно сделать
 
-**#5 Раскладка.** Таблицу строить через `UCKeyTranslate` по `kTISPropertyUnicodeKeyLayoutData` текущих источников ввода для кодов клавиш 0…50 со Shift и без него, а `LayoutMap` оставить запасным вариантом. После правки обнови `tools/layout_map.py` и тесты.
-
-**#1 Universal.** `UNIVERSAL=1 ./build_app.sh`, проверка `lipo -archs build/SmartLayout.app/Contents/MacOS/SmartLayout`.
-
-**#2 Подпись.** `codesign --force --options runtime --timestamp --sign "Developer ID Application: …"`, затем `xcrun notarytool submit … --wait` и `xcrun stapler staple`.
-
-**#6 Приватность ИИ.** `aiAutoCheck` по умолчанию `false`, при первом включении спрашивать согласие. `ConversationMemory.captureScreen` вызывать только с явного согласия. Пустой `style_profile.json` в сборках для других людей.
+- **Подпись Developer ID** (нужен аккаунт пользователя): `SIGN_ID="Developer ID Application: …" NOTARY_PROFILE=… ./build_app.sh dmg`. После этого `test_developer_id_signature` перестанет быть xfail.
+- Проверка обновлений и Homebrew cask, как в RuSwitcher.
